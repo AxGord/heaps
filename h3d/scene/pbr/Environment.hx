@@ -38,7 +38,6 @@ class IrradBase extends h3d.shader.ScreenShader {
 
 }
 
-
 class IrradShader extends IrradBase {
 
 	static var SRC = {
@@ -52,6 +51,8 @@ class IrradShader extends IrradBase {
 
 		@param var cubeSize : Float;
 		@param var cubeScaleFactor : Float;
+
+		@param var hdrMax : Float;
 
 		function cosineWeightedSampling( p : Vec2, n : Vec3 ) : Vec3 {
 			var sq = sqrt(1 - p.x);
@@ -95,7 +96,8 @@ class IrradShader extends IrradBase {
 				}
 				var amount = n.dot(l).saturate();
 				if( amount > 0 ) {
-					color += gammaCorrect(envMap.get(l).rgb) * amount;
+					var envColor = gammaCorrect(min(envMap.get(l).rgb, hdrMax));
+					color += envColor * amount;
 					totalWeight += amount;
 				}
 			}
@@ -147,12 +149,16 @@ class IrradLut extends IrradBase {
 	}
 }
 
-class IrradEquiProj extends h3d.shader.ScreenShader {
+class PanoramaToCube extends h3d.shader.ScreenShader {
 
 	static var SRC = {
 
 		@param var texture : Sampler2D;
 		@param var faceMatrix : Mat3;
+
+		// Fake HDR
+		@param var threshold : Float;
+		@param var aboveThresholdScale : Float;
 
 		function getNormal() : Vec3 {
 			var d = input.uv * 2. - 1.;
@@ -165,80 +171,151 @@ class IrradEquiProj extends h3d.shader.ScreenShader {
     		uv *= vec2(0.1591, 0.3183);
     		uv += 0.5;
 			pixelColor = texture.get(uv);
+
+			// Fake HDR
+			if( max(max(pixelColor.r, pixelColor.g), pixelColor.b) > threshold )
+				pixelColor *= aboveThresholdScale;
 		}
 
 	};
-
 }
 
-class Environment  {
+class CubeToPanorama extends h3d.shader.ScreenShader {
+
+	static var SRC = {
+
+		@param var source : SamplerCube;
+
+		function fragment() {
+			var PI = 3.1415926;
+			var fovX = PI * 2;
+			var fovY = PI;
+			var hOffset = (2.0 * PI - fovX) * 0.5;
+			var vOffset = (PI - fovY) * 0.5;
+			var hAngle = hOffset + calculatedUV.x * fovX;
+			var vAngle = vOffset + calculatedUV.y * fovY;
+			var n = vec3(0);
+			n.x = sin(vAngle) * sin(hAngle);
+			n.y = cos(vAngle);
+			n.z = sin(vAngle) * cos(hAngle);
+			n = n.normalize();
+			pixelColor = vec4(source.get(n).rgb, 1.0);
+			pixelColor = vec4(1,0,0,1);
+		}
+
+	};
+}
+
+class Environment {
 
 	public var sampleBits : Int;
 	public var diffSize : Int;
 	public var specSize : Int;
 	public var specLevels : Int;
-
 	public var ignoredSpecLevels : Int = 1;
+	public var hdrMax : Float = 10.0;
 
+	// 2D Texture - Panoramic
 	public var source : h3d.mat.Texture;
-	public var env : h3d.mat.Texture;
-	public var lut : h3d.mat.Texture;
+
+	// Cube Texture - Source converted
+	public var env(get,null) : h3d.mat.Texture;
+	public var lut(get,never) : h3d.mat.Texture;
 	public var diffuse : h3d.mat.Texture;
 	public var specular : h3d.mat.Texture;
 
 	public var power : Float = 1.;
+	public var rot : Float = 0.;
 
 	/*
 		Source can be cube map already prepared or a 2D equirectangular map that
 		will be turned into a cube map.
 	*/
-	public function new(src:h3d.mat.Texture) {
+	public function new( src : h3d.mat.Texture, ?diffSize = 64, ?specSize = 512, ?sampleBits = 12 ) {
 		this.source = src;
-		if( src.flags.has(Loading) )
-			throw "Source is not ready";
-		if( src.flags.has(Cube) ) {
-			this.env = src;
-		} else {
-			if( src.width != src.height*2 )
-				throw "Unrecognized environment map format";
-			env = new h3d.mat.Texture(src.height, src.height, [Cube, Target]);
-			var pass = new h3d.pass.ScreenFx(new IrradEquiProj());
-			var engine = h3d.Engine.getCurrent();
-			pass.shader.texture = src;
-			for( i in 0...6 ) {
-				engine.pushTarget(env,i);
-				pass.shader.faceMatrix = getCubeMatrix(i);
-				pass.render();
-				engine.popTarget();
-			}
+		this.diffSize = diffSize;
+		this.specSize = specSize;
+		this.sampleBits = sampleBits;
+	}
+
+	function get_lut() return getDefaultLUT();
+
+	function get_env() {
+		if( (env == null || env.isDisposed()) && source != null) env = equiToCube(source);
+		return env;
+	}
+
+	static var LUT_PIXELS = null;
+
+	public static function getDefaultLUT() {
+		var engine = h3d.Engine.getCurrent();
+		var t : h3d.mat.Texture = @:privateAccess engine.resCache.get(IrradLut);
+		if( t != null )
+			return t;
+		t = new h3d.mat.Texture(128, 128, [Target], RGBA32F);
+		if( LUT_PIXELS == null ) {
+			computeIrradLut(t);
+			LUT_PIXELS = t.capturePixels();
+		} else
+			t.uploadPixels(LUT_PIXELS);
+		@:privateAccess engine.resCache.set(IrradLut, t);
+		t.realloc = function() {
+			t.uploadPixels(LUT_PIXELS);
 		}
-		diffSize = 64;
-		specSize = 256;
-		sampleBits = 12;
+		return t;
+	}
+
+	public static function equiToCube( source : h3d.mat.Texture, ?threshold = 1.0, ?scale = 1.0 ) {
+		if( source.flags.has(Loading) )
+			throw "Source is not ready";
+		if( source.flags.has(Cube) )
+			return source;
+
+		if( source.width != source.height * 2 )
+			throw "Unrecognized environment map format";
+		var env = new h3d.mat.Texture(source.height, source.height, [Cube, Target], hxd.Pixels.isFloatFormat(source.format) ? RGBA32F : RGBA );
+		var pass = new h3d.pass.ScreenFx(new PanoramaToCube());
+		var engine = h3d.Engine.getCurrent();
+		pass.shader.texture = source;
+		pass.shader.aboveThresholdScale = scale;
+		pass.shader.threshold = threshold;
+		env.realloc = null;
+		for( i in 0...6 ) {
+			engine.pushTarget(env,i);
+			pass.shader.faceMatrix = getCubeMatrix(i);
+			pass.render();
+			engine.popTarget();
+		}
+		return env;
 	}
 
 	public function dispose() {
-		env.dispose();
-		lut.dispose();
-		diffuse.dispose();
-		specular.dispose();
+		if( @:bypassAccessor env != null ) env.dispose();
+		if( diffuse != null ) diffuse.dispose();
+		if( specular != null ) specular.dispose();
+		// do not set to null as their might be candidate for realloc
+	}
+
+	function createTextures() {
+		if( diffuse == null ) {
+			diffuse = new h3d.mat.Texture(diffSize, diffSize, [Cube, Target], RGBA32F);
+			diffuse.setName("irradDiffuse");
+			diffuse.preventAutoDispose();
+		}
+		if( specular == null ) {
+			specular = new h3d.mat.Texture(specSize, specSize, [Cube, Target, MipMapped, ManualMipMapGen], RGBA32F);
+			specular.setName("irradSpecular");
+			specular.mipMap = Linear;
+			specular.preventAutoDispose();
+		}
 	}
 
 	public function compute() {
-
-		lut = new h3d.mat.Texture(128, 128, [Target], RGBA16F);
-		lut.setName("irradLut");
-		diffuse = new h3d.mat.Texture(diffSize, diffSize, [Cube, Target]);
-		diffuse.setName("irradDiffuse");
-		specular = new h3d.mat.Texture(specSize, specSize, [Cube, Target, MipMapped, ManualMipMapGen]);
-		specular.setName("irradSpecular");
-		specular.mipMap = Linear;
-
-		computeIrradLut();
+		createTextures();
 		computeIrradiance();
 	}
 
-	function getCubeMatrix( face : Int ) {
+	static function getCubeMatrix( face : Int ) {
 		return h3d.Matrix.L(switch( face ) {
 			case 0: [0,0,-1,0,
 					 0,-1,0,0,
@@ -261,15 +338,22 @@ class Environment  {
 		});
 	}
 
-	function computeIrradLut() {
+	static function computeIrradLut( t : h3d.mat.Texture ) {
 		var screen = new h3d.pass.ScreenFx(new IrradLut());
-		screen.shader.samplesBits = sampleBits;
+		screen.shader.samplesBits = 12;
 
 		var engine = h3d.Engine.getCurrent();
-		engine.pushTarget(lut);
+		engine.pushTarget(t);
 		screen.render();
 		engine.popTarget();
 		screen.dispose();
+	}
+
+	function getMipLevels() : Int {
+		var mipLevels = 1;
+		while( specular.width > 1 << (mipLevels - 1) )
+			mipLevels++;
+		return mipLevels;
 	}
 
 	function computeIrradiance() {
@@ -278,6 +362,7 @@ class Environment  {
 		screen.shader.samplesBits = sampleBits;
 		screen.shader.envMap = env;
 		screen.shader.isSRGB = env.isSRGB();
+		screen.shader.hdrMax = hdrMax;
 
 		var engine = h3d.Engine.getCurrent();
 
@@ -290,15 +375,12 @@ class Environment  {
 
 		screen.shader.isSpecular = true;
 
-		var mipLevels = 1;
-		while( specular.width > 1 << (mipLevels - 1) )
-			mipLevels++;
-
+		var mipLevels = getMipLevels();
 		specLevels = mipLevels - ignoredSpecLevels;
 
 		for( i in 0...6 ) {
 			screen.shader.faceMatrix = getCubeMatrix(i);
-			for( j in 0...mipLevels ) {
+			for( j in 0... mipLevels ) {
 				var size = specular.width >> j;
 				screen.shader.cubeSize = size;
 				screen.shader.cubeScaleFactor = size == 1 ? 0 : (size * size) / Math.pow(size - 1, 3);
@@ -308,6 +390,26 @@ class Environment  {
 				engine.popTarget();
 			}
 		}
+	}
+
+	public static function getDefault() {
+		var engine = h3d.Engine.getCurrent();
+		var e : Environment = @:privateAccess engine.resCache.get(Environment);
+		if( e != null ) return e;
+
+		var SRC = hxd.res.Embed.getResource("h3d/scene/pbr/envDefault.dds");
+		var DIF = hxd.res.Embed.getResource("h3d/scene/pbr/envDefault.envd.dds");
+		var SPEC = hxd.res.Embed.getResource("h3d/scene/pbr/envDefault.envs.dds");
+
+		e = new Environment(SRC.toImage().toTexture());
+		e.diffuse = DIF.toImage().toTexture();
+		e.specular = SPEC.toImage().toTexture();
+		e.diffSize = e.diffuse.width;
+		e.specSize = e.specular.width;
+		e.specLevels = e.getMipLevels() - e.ignoredSpecLevels;
+		e.sampleBits = 5;
+		@:privateAccess engine.resCache.set(Environment,e);
+		return e;
 	}
 
 }

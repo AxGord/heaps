@@ -1,4 +1,5 @@
 package hxd.res;
+#if macro
 import haxe.macro.Context;
 import haxe.macro.Expr;
 
@@ -75,10 +76,15 @@ class FileTree {
 	}
 
 	static var invalidChars = ~/[^A-Za-z0-9_]/g;
+	static var KEYWORDS = [for( k in ["break","case","cast","catch","class","continue","default","do","dynamic",
+									"else","extends","extern","false","for","function","if","implementes","import",
+									"interface","never","null","override","package","private","public","return",
+									"static","super","switch","this","throw","trace","true","typedef","untyped",
+									"using","var","final","while"] ) k => true];
 
 	function makeIdent( s : String ) {
 		var ident = invalidChars.replace(s, "_");
-		if( ident == "" || (ident.charCodeAt(0) >= "0".code && ident.charCodeAt(0) <= "9".code) )
+		if( ident == "" || (ident.charCodeAt(0) >= "0".code && ident.charCodeAt(0) <= "9".code) || KEYWORDS.exists(ident) )
 			ident = "_" + ident;
 		return ident;
 	}
@@ -148,7 +154,7 @@ class FileTree {
 			if( !StringTools.startsWith(file.fullPath, basePath) )
 				continue;
 			var name = "R_" + invalidChars.replace(file.relPath, "_");
-			var f = fs.get(file.relPath); // convert
+			var f = try fs.get(file.relPath) catch( e : hxd.res.NotFound ) continue; // convert and filter
 			var fullPath = fs.getAbsolutePath(f);
 
 			switch( file.ext ) {
@@ -270,11 +276,7 @@ class FileTree {
 					ret : field.t,
 					expr : { expr : EMeta({ name : ":privateAccess", params : [], pos : pos }, { expr : EReturn(field.e), pos : pos }), pos : pos },
 				}),
-				#if openfl
-				meta : [ { name:":keep", pos:pos, params:[] } ],
-				#else
 				meta : [ { name:":extern", pos:pos, params:[] } ],
-				#end
 				access : [AStatic, AInline, APrivate],
 			};
 			var field : Field = {
@@ -325,7 +327,7 @@ class FileTree {
 		for( f in tree.files ) {
 			// handle duplicates
 			if( fident.get(f.ident) != f.relPath )
-				f.ident += "_" + f.ext;
+				f.ident += "_" + makeIdent(f.ext);
 			var ftype = extensions.get(f.ext);
 			if( ftype == null ) ftype = defaultExt;
 			var epath = { expr : EConst(CString(f.relPath)), pos : pos };
@@ -341,7 +343,8 @@ class FileTree {
 		dict.set("loader", "reserved identifier");
 		buildFieldsRec(d, ofields, dict);
 
-		var name = "_" + makeIdent(d.relPath);
+		var name = makeIdent(d.relPath);
+		name = "_" + name.charAt(0).toUpperCase() + name.substr(1);
 		for( f in ofields )
 			f.access.remove(AStatic);
 		var def = macro class {
@@ -373,3 +376,4 @@ class FileTree {
 	}
 
 }
+#end

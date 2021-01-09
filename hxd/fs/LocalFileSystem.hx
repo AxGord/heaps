@@ -74,8 +74,15 @@ class LocalEntry extends FileEntry {
 
 	override function loadBitmap( onLoaded : hxd.fs.LoadedBitmap -> Void ) : Void {
 		#if js
+		#if (multidriver && !macro)
+		var engine = h3d.Engine.getCurrent(); // hide
+		#end
 		var image = new js.html.Image();
 		image.onload = function(_) {
+			#if (multidriver && !macro)
+			if( engine.driver == null ) return;
+			engine.setCurrent();
+			#end
 			onLoaded(new LoadedBitmap(image));
 		};
 		image.src = "file://"+file;
@@ -129,16 +136,28 @@ class LocalEntry extends FileEntry {
 		return sys.FileSystem.stat(originalFile != null ? originalFile : file).mtime.getTime();
 	}
 
+	#if hl
+	#if (hl_ver >= version("1.12.0")) @:hlNative("std","file_is_locked") #end static function fileIsLocked( b : hl.Bytes ) { return false; }
+	#end
+
 	static function checkFiles() {
+		var filesToCheck = Math.ceil(WATCH_LIST.length / 60);
+		if( filesToCheck > LocalFileSystem.FILES_CHECK_MAX )
+			filesToCheck = LocalFileSystem.FILES_CHECK_MAX;
+		for( i in 0...filesToCheck )
+			checkNext();
+	}
+
+	static function checkNext() {
 		var w = WATCH_LIST[WATCH_INDEX++];
 		if( w == null ) {
 			WATCH_INDEX = 0;
 			return;
 		}
-		var t = try w.getModifTime() catch( e : Dynamic ) -1.;
+		var t = try w.getModifTime() catch( e : Dynamic ) return;
 		if( t == w.watchTime ) return;
 
-		#if sys
+		#if (sys || nodejs)
 		if( tmpDir == null ) {
 			tmpDir = Sys.getEnv("TEMP");
 			if( tmpDir == null ) tmpDir = Sys.getEnv("TMPDIR");
@@ -148,8 +167,14 @@ class LocalEntry extends FileEntry {
 		if( sys.FileSystem.exists(lockFile) ) return;
 		if( !w.isDirectory )
 		try {
-			var fp = sys.io.File.append(w.file);
-			fp.close();
+			#if nodejs
+			var cst = js.node.Fs.constants;
+			var fid = js.node.Fs.openSync(w.file, cast (cst.O_RDONLY | cst.O_EXCL | 0x10000000));
+			js.node.Fs.closeSync(fid);
+			#elseif hl
+			if( fileIsLocked(@:privateAccess Sys.getPath(w.file)) )
+				return;
+			#end
 		}catch( e : Dynamic ) return;
 		#end
 
@@ -193,6 +218,7 @@ class LocalFileSystem implements FileSystem {
 	public var baseDir(default,null) : String;
 	public var convert(default,null) : FileConverter;
 	static var isWindows = Sys.systemName() == "Windows";
+	public static var FILES_CHECK_MAX = 5;
 
 	public function new( dir : String, configuration : String ) {
 		baseDir = dir;
@@ -267,6 +293,7 @@ class LocalFileSystem implements FileSystem {
 		if( !check || ((!isWindows || (isWindows && f == baseDir + path)) && sys.FileSystem.exists(f) && checkPath(f)) ) {
 			e = new LocalEntry(this, path.split("/").pop(), path, f);
 			convert.run(e);
+			if( e.file == null ) e = null;
 		}
 		fileCache.set(path, {r:e});
 		return e;

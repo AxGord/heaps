@@ -1,25 +1,51 @@
 package h2d;
 
+/**
+	A layer-based container for Objects.
+
+	Hierarchically organizes objects based on their layer.
+	Supports per-layer Y-sorting through `Layers.ysort`.
+**/
 class Layers extends Object {
 
 	// the per-layer insert position
 	var layersIndexes : Array<Int>;
 	var layerCount : Int;
 
+	/**
+		Create a new Layers instance.
+		@param parent An optional parent `h2d.Object` instance to which Layers adds itself if set.
+	**/
 	public function new(?parent) {
 		super(parent);
 		layersIndexes = [];
 		layerCount = 0;
 	}
 
+	/**
+		Adds a child object `s` at the end of the layer 0.
+		@param s An object to be added.
+	**/
 	override function addChild(s) {
 		addChildAt(s, 0);
 	}
 
+	/**
+		Adds a child object `s` at the end of the given `layer`.
+		`h2d.Layers.addChildAt` can be used as an alternative.
+		@param s An object to be added.
+		@param layer An index of the layer, 0 is the bottom-most layer.
+	**/
 	public inline function add(s, layer) {
 		return addChildAt(s, layer);
 	}
 
+	/**
+		Adds a child object `s` at the end of the given `layer`.
+		`h2d.Layers.addChildAt` can be used as an alternative.
+		@param s An object to be added.
+		@param layer An index of the layer, 0 is the bottom-most layer.
+	**/
 	override function addChildAt( s : Object, layer : Int ) {
 		if( s.parent == this ) {
 			var old = s.allocated;
@@ -55,8 +81,10 @@ class Layers extends Object {
 	}
 
 	/**
-		Moves Object to the bottom of its layer (rendered first, behind the other Objects in layer).
-	**/
+		Moves an object `s` to the bottom of its layer (rendered first, behind the other Objects in the layer).
+		Causes `Object.onHierarchyMoved` on the Object.
+		@param s An object to be moved.
+	 */
 	public function under( s : Object ) {
 		for( i in 0...children.length )
 			if( children[i] == s ) {
@@ -80,8 +108,10 @@ class Layers extends Object {
 	}
 
 	/**
-		Moves Object to the top of its layer (rendered last, in front of other Objects in layer).
-	**/
+		Moves an object `s` to the top of its layer (rendered last, in front of other Objects in layer).
+		Causes `Object.onHierarchyMoved` on the Object.
+		@param s An object to be moved.
+	 */
 	public function over( s : Object ) {
 		for( i in 0...children.length )
 			if( children[i] == s ) {
@@ -100,10 +130,13 @@ class Layers extends Object {
 	}
 
 	/**
-		Returns Iterator of objects contained in specified layer.  
-		Returns empty iterator if layer does not exists.  
-		Objects added or removed from Layers during iteration are not added/removed from the Iterator.
-	**/
+		Returns an Iterator with objects in a specified `layer`.
+		Returns an empty iterator if no objects are present in the layer.
+
+		Objects added or removed from Layers during iteration do not affect the output of the Iterator.
+
+		@param layer A layer index to iterate over.
+	 */
 	public function getLayer( layer : Int ) : Iterator<Object> {
 		var a;
 		if( layer >= layerCount )
@@ -117,9 +150,10 @@ class Layers extends Object {
 	}
 
 	/**
-		Finds the layer on which child object resides.  
-		Always returns -1 if provided Object is not a child of Layers.
-	**/
+		Returns the layer on which the child `s` resides on.
+		@param s An object to look up to.
+		@return An index of the layer where the object resides on or `-1` if `s` is not a child of the Layers.
+	 */
 	public function getChildLayer( s : Object ) : Int {
 		if ( s.parent != this ) return -1;
 
@@ -145,8 +179,10 @@ class Layers extends Object {
 	}
 
 	/**
-		Sorts specified layer based on Y value of it's Objects.
-	**/
+		Sorts specified layer based on `Object.y` value of it's children.
+		Causes `Object.onHierarchyChanged` on moved children.
+		@param layer An index of the layer to sort.
+	 */
 	public function ysort( layer : Int ) {
 		if( layer >= layerCount ) return;
 		var start = layer == 0 ? 0 : layersIndexes[layer - 1];
@@ -173,6 +209,5 @@ class Layers extends Object {
 			pos++;
 		}
 	}
-
 
 }

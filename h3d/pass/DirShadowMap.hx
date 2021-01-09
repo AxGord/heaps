@@ -8,6 +8,13 @@ class DirShadowMap extends Shadows {
 	var border : Border;
 	var mergePass = new h3d.pass.ScreenFx(new h3d.shader.MinMaxShader());
 
+	// Shrink the frustum of the light to the bounds containing all visible objects
+	public var autoShrink = true;
+	// Clamp the zFar of the frustum of the camera for bounds calculation
+	public var maxDist = -1.0;
+	// Clamp the zNear of the frustum of the camera for bounds calculation
+	public var minDist = -1.0;
+
 	public function new( light : h3d.scene.Light ) {
 		super(light);
 		lightCamera = new h3d.Camera();
@@ -21,6 +28,11 @@ class DirShadowMap extends Shadows {
 	override function set_mode(m:Shadows.RenderMode) {
 		dshader.enable = m != None;
 		return mode = m;
+	}
+
+	override function set_enabled(b:Bool) {
+		dshader.enable = b && mode != None;
+		return enabled = b;
 	}
 
 	override function set_size(s) {
@@ -43,58 +55,80 @@ class DirShadowMap extends Shadows {
 
 	public dynamic function calcShadowBounds( camera : h3d.Camera ) {
 		var bounds = camera.orthoBounds;
-		var mtmp = new h3d.Matrix();
 
-		// add visible casters in light camera position
-		ctx.scene.iterVisibleMeshes(function(m) {
-			if( m.primitive == null || !m.material.castShadows ) return;
-			var b = m.primitive.getBounds();
-			if( b.xMin > b.xMax ) return;
-			mtmp.multiply3x4(m.getAbsPos(), camera.mcam);
+		if( autoShrink ) {
+			// add visible casters in light camera position
+			var mtmp = new h3d.Matrix();
+			ctx.scene.iterVisibleMeshes(function(m) {
+				if( m.primitive == null || !m.material.castShadows ) return;
+				var b = m.primitive.getBounds();
+				if( b.xMin > b.xMax ) return;
+				mtmp.multiply3x4(m.getAbsPos(), camera.mcam);
 
-			var p = new h3d.col.Point(b.xMin, b.yMin, b.zMin);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMin, b.yMin, b.zMin);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMin, b.yMin, b.zMax);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMin, b.yMin, b.zMax);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMin, b.yMax, b.zMin);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMin, b.yMax, b.zMin);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMin, b.yMax, b.zMax);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMin, b.yMax, b.zMax);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMax, b.yMin, b.zMin);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMax, b.yMin, b.zMin);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMax, b.yMin, b.zMax);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMax, b.yMin, b.zMax);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMax, b.yMax, b.zMin);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMax, b.yMax, b.zMin);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-			var p = new h3d.col.Point(b.xMax, b.yMax, b.zMax);
-			p.transform(mtmp);
-			bounds.addPoint(p);
+				var p = new h3d.col.Point(b.xMax, b.yMax, b.zMax);
+				p.transform(mtmp);
+				bounds.addPoint(p);
 
-		});
+			});
+		}
+		else {
+			if( mode == Dynamic )
+				bounds.all();
+		}
 
 		if( mode == Dynamic ) {
-			// intersect with frustum bounds
+
+			// Intersect with frustum bounds
 			var cameraBounds = new h3d.col.Bounds();
-			for( pt in ctx.camera.getFrustumCorners() ) {
+			var zMax = 1.0;
+			var zMin = 0.0;
+			var n = ctx.camera.zNear;
+			var f = ctx.camera.zFar;
+			if( maxDist > 0 )
+				zMax = ((f + n - 2.0 * n * f / hxd.Math.clamp(maxDist, n, f)) / (f - n) + 1.0) / 2.0;
+			if( minDist > 0 )
+				zMin = ((f + n - 2.0 * n * f /  hxd.Math.clamp(minDist, n, f)) / (f - n) + 1.0) / 2.0;
+			for( pt in ctx.camera.getFrustumCorners(zMax, zMin) ) {
 				pt.transform(camera.mcam);
 				cameraBounds.addPos(pt.x, pt.y, pt.z);
 			}
-			cameraBounds.zMin = bounds.zMin;
-			bounds.intersection(bounds, cameraBounds);
+
+			if( autoShrink ) {
+				// Keep the zMin from the bounds of visible objects
+				// Prevent shadows inside frustum from objects outside frustum being clipped
+				cameraBounds.zMin = bounds.zMin;
+				bounds.intersection(bounds, cameraBounds);
+			}
+			else
+				bounds.load( cameraBounds );
 		}
 
 		bounds.scaleCenter(1.01);
@@ -179,15 +213,19 @@ class DirShadowMap extends Shadows {
 		staticTexture = new h3d.mat.Texture(size, size, [Target], format);
 		staticTexture.uploadPixels(pixels);
 		staticTexture.name = "staticTexture";
-		staticTexture.realloc = null;
 		staticTexture.preventAutoDispose();
 		syncShader(staticTexture);
 		return true;
 	}
 
 	override function draw( passes, ?sort ) {
+		if( !enabled )
+			return;
+
 		if( !filterPasses(passes) )
 			return;
+
+		cullPasses(passes,function(col) return col.inFrustum(lightCamera.frustum));
 
 		var texture = ctx.textures.allocTarget("dirShadowMap", size, size, false, format);
 		if( customDepth && (depth == null || depth.width != size || depth.height != size || depth.isDisposed()) ) {
@@ -216,7 +254,10 @@ class DirShadowMap extends Shadows {
 		ctx.engine.pushTarget(texture);
 		ctx.engine.clear(0xFFFFFF, 1);
 		super.draw(passes, sort);
-		if( border != null ) border.render();
+
+		if( border != null )
+			border.render();
+
 		ctx.engine.popTarget();
 
 		if( mode == Mixed && !ctx.computingStatic ) {
@@ -240,10 +281,12 @@ class DirShadowMap extends Shadows {
 			return;
 		draw(passes);
 		var texture = dshader.shadowMap;
-		if( staticTexture != null ) staticTexture.dispose();
+		var old = staticTexture;
 		staticTexture = texture.clone();
+		staticTexture.name = "StaticDirShadowMap";
+		staticTexture.preventAutoDispose();
 		dshader.shadowMap = staticTexture;
+		if( old != null )
+			old.dispose();
 	}
-
-
 }

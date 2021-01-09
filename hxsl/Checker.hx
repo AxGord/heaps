@@ -80,12 +80,18 @@ class Checker {
 			case Texel:
 				[
 					{ args : [ { name: "tex", type: TSampler2D }, { name: "pos", type: ivec2 } ], ret: vec4 },
-					{ args : [ { name: "tex", type: TSampler2DArray }, { name: "pos", type: ivec3 } ], ret: vec4 }
-				];
-			case TexelLod:
-				[
+					{ args : [ { name: "tex", type: TSampler2DArray }, { name: "pos", type: ivec3 } ], ret: vec4 },
 					{ args : [ { name: "tex", type: TSampler2D }, { name: "pos", type: ivec2 }, { name: "lod", type: TInt } ], ret: vec4 },
-					{ args : [ { name: "tex", type: TSampler2DArray }, { name: "pos", type: ivec3 }, { name: "lod", type: TInt } ], ret: vec4 }
+					{ args : [ { name: "tex", type: TSampler2DArray }, { name: "pos", type: ivec3 }, { name: "lod", type: TInt } ], ret: vec4 },
+				];
+			case TextureSize:
+				[
+					{ args : [ { name: "tex", type: TSampler2D } ], ret: vec2 },
+					{ args : [ { name: "tex", type: TSampler2DArray } ], ret: vec3 },
+					{ args : [ { name: "tex", type: TSamplerCube } ], ret: vec2 },
+					{ args : [ { name: "tex", type: TSampler2D }, { name: "lod", type: TInt } ], ret: vec2 },
+					{ args : [ { name: "tex", type: TSampler2DArray }, { name: "lod", type: TInt } ], ret: vec3 },
+					{ args : [ { name: "tex", type: TSamplerCube }, { name: "lod", type: TInt } ], ret: vec2 },
 				];
 			case ToInt:
 				[for( t in baseType ) { args : [ { name : "value", type : t } ], ret : TInt } ];
@@ -155,13 +161,21 @@ class Checker {
 					{ args : [ { name : "channel", type : TChannel(2) }, { name : "pos", type : ivec2 } ], ret : vec2 },
 					{ args : [ { name : "channel", type : TChannel(3) }, { name : "pos", type : ivec2 } ], ret : vec3 },
 					{ args : [ { name : "channel", type : TChannel(4) }, { name : "pos", type : ivec2 } ], ret : vec4 },
-				];
-			case ChannelFetchLod:
-				[
 					{ args : [ { name : "channel", type : TChannel(1) }, { name : "pos", type : ivec2 }, { name : "lod", type : TInt } ], ret : TFloat },
 					{ args : [ { name : "channel", type : TChannel(2) }, { name : "pos", type : ivec2 }, { name : "lod", type : TInt } ], ret : vec2 },
 					{ args : [ { name : "channel", type : TChannel(3) }, { name : "pos", type : ivec2 }, { name : "lod", type : TInt } ], ret : vec3 },
 					{ args : [ { name : "channel", type : TChannel(4) }, { name : "pos", type : ivec2 }, { name : "lod", type : TInt } ], ret : vec4 },
+				];
+			case ChannelTextureSize:
+				[
+					{ args : [ { name: "channel", type: TChannel(1) } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(2) } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(3) } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(4) } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(1) }, { name : "lod", type : TInt } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(2) }, { name : "lod", type : TInt } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(3) }, { name : "lod", type : TInt } ], ret: vec2 },
+					{ args : [ { name: "channel", type: TChannel(4) }, { name : "lod", type : TInt } ], ret: vec2 },
 				];
 			case ScreenToUv:
 				[{ args : [{ name : "screenPos", type : vec2 }], ret : vec2 }];
@@ -169,7 +183,7 @@ class Checker {
 				[{ args : [{ name : "uv", type : vec2 }], ret : vec2 }];
 			case Trace:
 				[];
-			case VertexID, InstanceID:
+			case VertexID, InstanceID, FragCoord, FrontFacing:
 				null;
 			}
 			if( def != null )
@@ -177,9 +191,15 @@ class Checker {
 		}
 		globals.set("vertexID", { t : TInt, g : VertexID });
 		globals.set("instanceID", { t : TInt, g : InstanceID });
+		globals.set("fragCoord", { t : vec4, g : FragCoord });
+		globals.set("frontFacing", { t : TBool, g : FrontFacing });
 		globals.set("int", globals.get("toInt"));
 		globals.set("float", globals.get("toFloat"));
 		globals.set("reflect", globals.get("lReflect"));
+		for( i in 2...5 ) {
+			globals.set("ivec"+i, globals.get("iVec"+i));
+			globals.remove("iVec"+i);
+		}
 		globals.remove("lReflect");
 		globals.remove("toInt");
 		globals.remove("toFloat");
@@ -189,6 +209,9 @@ class Checker {
 
 	function error( msg : String, pos : Position ) : Dynamic {
 		return Ast.Error.t(msg,pos);
+	}
+
+	public dynamic function warning( msg : String, pos : Position ) {
 	}
 
 	public dynamic function loadShader( path : String ) : Expr {
@@ -275,6 +298,13 @@ class Checker {
 		switch( [t1, t2] ) {
 		case [TVec(s1, t1), TVec(s2, t2)] if( s1 == s2 && t1 == t2 ):
 			return true;
+		case [TArray(t1, size1), TArray(t2, size2)]:
+			switch( [size1,size2] ) {
+			case [SConst(a),SConst(b)] if( a == b ):
+			case [SVar(v1),SVar(v2)] if( v1 == v2 ):
+			default: return false;
+			}
+			return tryUnify(t1,t2);
 		case [TChannel(n1), TChannel(n2)] if( n1 == n2 ):
 			return true;
 		default:
@@ -368,7 +398,9 @@ class Checker {
 				case EVars(_): InBlock;
 				default: if( el.length == 0 ) with else NoValue;
 				}
-				tl.push(typeExpr(e, ew));
+				var et = typeExpr(e, ew);
+				if( el.length != 0 && !et.hasSideEffect() ) warning("This expression has no side effect", e.pos);
+				tl.push(et);
 			}
 			vars = old;
 			type = with == NoValue ? TVoid : tl[tl.length - 1].t;
@@ -587,7 +619,7 @@ class Checker {
 			var e1 = typeExpr(e1, Value);
 			var e2 = typeExpr(e2, With(TInt));
 			switch( e2.t ) {
-			case TInt, TFloat:
+			case TInt:
 			default: unify(e2.t, TInt, e2.p);
 			}
 			switch( e1.t ) {
@@ -777,7 +809,7 @@ class Checker {
 					default:
 						error("Precision qualifier not supported on " + v.type, pos);
 					}
-				case Ignore:
+				case Ignore, Doc(_):
 				}
 		}
 		if( tv.type != null )
@@ -803,8 +835,6 @@ class Checker {
 			case TStruct(_):
 				error("Array of structures are not allowed", pos);
 			default:
-				if( t.isSampler() )
-					error("Array of textures are not allowed, use Sampler2DArray instead", pos);
 			}
 			var s = switch( size ) {
 			case SConst(_): size;
@@ -874,10 +904,10 @@ class Checker {
 			case ["get", TChannel(_)]: ChannelRead;
 			case ["getLod", TSampler2D|TSampler2DArray|TSamplerCube]: TextureLod;
 			case ["getLod", TChannel(_)]: ChannelReadLod;
-			case ["fetch", TSampler2D|TSampler2DArray]: Texel;
-			case ["fetch", TChannel(_)]: ChannelFetch;
-			case ["fetchLod", TSampler2D|TSampler2DArray]: TexelLod;
-			case ["fetchLod", TChannel(_)]: ChannelFetchLod;
+			case ["fetch"|"fetchLod", TSampler2D|TSampler2DArray]: Texel;
+			case ["fetch"|"fetchLod", TChannel(_)]: ChannelFetch;
+			case ["size", TSampler2D|TSampler2DArray|TSamplerCube]: TextureSize;
+			case ["size", TChannel(_)]: ChannelTextureSize;
 			default: null;
 			}
 			if( gl != null ) {
@@ -957,15 +987,24 @@ class Checker {
 		case Vec4:
 			checkLength(4,TFloat);
 			type = TVec(4,VFloat);
-		case IVec2:
-			checkLength(2,TInt);
-			type = TVec(2,VInt);
-		case IVec3:
-			checkLength(3,TInt);
-			type = TVec(3,VInt);
-		case IVec4:
-			checkLength(4,TInt);
-			type = TVec(4,VInt);
+		case IVec2, IVec3, IVec4:
+			var k = switch(g) {
+			case IVec2: 2;
+			case IVec3: 3;
+			case IVec4: 4;
+			default: throw "assert";
+			}
+			if( args.length == 1 ) {
+				switch( args[0].t ) {
+				case TInt, TFloat:
+				case TVec(n,VFloat):
+					if( n != 3 ) error("Invalid input vector length: "+n+" should be "+k, pos);
+				default:
+					checkLength(k,TInt);
+				}
+			} else
+				checkLength(k,TInt);
+			type = TVec(k,VInt);
 		case BVec2:
 			checkLength(2,TBool);
 			type = TVec(2,VBool);
@@ -982,10 +1021,19 @@ class Checker {
 			default:
 				error("Cannot apply " + g.toString() + " to these parameters", pos);
 			}
+		case Mat2:
+			switch( ([for( a in args ) a.t]) ) {
+			case [TMat2]: type = TMat2;
+			case [TVec(2, VFloat), TVec(2, VFloat)]: type = TMat2;
+			case [TFloat, TFloat, TFloat, TFloat]: type = TMat2;
+			default:
+				error("Cannot apply " + g.toString() + " to these parameters", pos);
+			}
 		case Mat3:
 			switch( ([for( a in args ) a.t]) ) {
 			case [TMat3x4 | TMat4]: type = TMat3;
 			case [TVec(3, VFloat), TVec(3, VFloat), TVec(3, VFloat)]: type = TMat3;
+			case [TFloat, TFloat, TFloat, TFloat, TFloat, TFloat, TFloat, TFloat, TFloat]: type = TMat3;
 			default:
 				error("Cannot apply " + g.toString() + " to these parameters", pos);
 			}
@@ -1093,6 +1141,8 @@ class Checker {
 				vec3;
 			case [OpMult, TVec(3,VFloat), TMat3]:
 				vec3;
+			case [OpMult, TVec(2,VFloat), TMat2]:
+				vec2;
 			case [_, TInt, TInt]: TInt;
 			case [_, TFloat, TFloat]: TFloat;
 			case [_, TInt, TFloat]: toFloat(e1); TFloat;

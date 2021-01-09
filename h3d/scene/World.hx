@@ -283,6 +283,11 @@ class World extends Object {
 			return null;
 		try {
 			return hxd.res.Loader.currentInstance.load(mat.specularTexture).toImage();
+		} catch( e : hxd.res.NotFound ) try {
+			var path = path.split("/");
+			path.pop();
+			path.push(mat.specularTexture.split("/").pop());
+			return hxd.res.Loader.currentInstance.load(path.join("/")).toImage();
 		} catch( e : hxd.res.NotFound ) {
 			return null;
 		}
@@ -293,6 +298,11 @@ class World extends Object {
 			return null;
 		try {
 			return hxd.res.Loader.currentInstance.load(mat.normalMap).toImage();
+		} catch( e : hxd.res.NotFound ) try {
+			var path = path.split("/");
+			path.pop();
+			path.push(mat.normalMap.split("/").pop());
+			return hxd.res.Loader.currentInstance.load(path.join("/")).toImage();
 		} catch( e : hxd.res.NotFound ) {
 			return null;
 		}
@@ -592,7 +602,7 @@ class World extends Object {
 		mesh.material.textureShader.killAlphaThreshold = mat.killAlpha;
 		mesh.material.mainPass.enableLights = mat.lights;
 		mesh.material.shadows = mat.shadows;
-		mesh.material.mainPass.culling = Back;
+		mesh.material.mainPass.culling = mat.culling ? Back : None;
 		mesh.material.mainPass.depthWrite = true;
 		mesh.material.mainPass.depthTest = Less;
 
@@ -667,7 +677,7 @@ class World extends Object {
 		super.syncRec(ctx);
 		// don't do in sync() since animations in our world might affect our chunks
 		for( c in allChunks ) {
-			c.root.visible = c.bounds.inFrustum(ctx.camera.frustum);
+			c.root.visible = ctx.computingStatic || c.bounds.inFrustum(ctx.camera.frustum);
 			if( c.root.visible ) {
 				c.lastFrame = ctx.frame;
 				initChunk(c);

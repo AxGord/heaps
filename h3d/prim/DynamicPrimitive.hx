@@ -8,6 +8,11 @@ class DynamicPrimitive extends Primitive {
 	var isize : Int;
 	var stride : Int;
 
+	/** Minimum number of elements in vertex buffer **/
+	public var minVSize = 0;
+	/** Minimum number of elements in index index buffer **/
+	public var minISize = 0;
+
 	public var bounds = new h3d.col.Bounds();
 
 	public function new( stride : Int ) {
@@ -54,17 +59,20 @@ class DynamicPrimitive extends Primitive {
 		}
 
 		if( buffer == null )
-			buffer = alloc.allocBuffer(vsize, stride, Dynamic);
+			buffer = alloc.allocBuffer(hxd.Math.imax(minVSize, vsize), stride, Dynamic);
 		if( indexes == null )
-			indexes = alloc.allocIndexBuffer(isize);
+			indexes = alloc.allocIndexBuffer(hxd.Math.imax(minISize, isize));
 
 		buffer.uploadVector(vbuf, 0, vsize);
 		indexes.upload(ibuf, 0, isize);
 	}
 
 	override function dispose() {
-		super.dispose();
 		var alloc = hxd.impl.Allocator.get();
+		if( buffer != null ) {
+			alloc.disposeBuffer(buffer);
+			buffer = null;
+		}
 		if( vbuf != null ) {
 			alloc.disposeFloats(vbuf);
 			vbuf = null;
@@ -73,6 +81,7 @@ class DynamicPrimitive extends Primitive {
 			alloc.disposeIndexes(ibuf);
 			ibuf = null;
 		}
+		super.dispose();
 	}
 
 	override function triCount() {

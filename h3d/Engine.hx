@@ -3,6 +3,7 @@ import h3d.mat.Data;
 
 private class TargetTmp {
 	public var t : h3d.mat.Texture;
+	public var textures : Array<h3d.mat.Texture>;
 	public var next : TargetTmp;
 	public var layer : Int;
 	public var mipLevel : Int;
@@ -49,9 +50,10 @@ class Engine {
 	var needFlushTarget : Bool;
 	var nullTexture : h3d.mat.Texture;
 	var textureColorCache = new Map<Int,h3d.mat.Texture>();
+	var inRender = false;
 	public var ready(default,null) = false;
 	@:allow(hxd.res) var resCache = new Map<{},Dynamic>();
-	
+
 	public static var SOFTWARE_DRIVER = false;
 	public static var ANTIALIASING = 0;
 
@@ -67,7 +69,7 @@ class Engine {
 		window.addResizeEvent(onWindowResize);
 		#if macro
 		driver = new h3d.impl.NullDriver();
-		#elseif (js || cpp || hlsdl || usegl)
+		#elseif (js || hlsdl || usegl)
 		driver = new h3d.impl.GlDriver(antiAlias);
 		#elseif flash
 		driver = new h3d.impl.Stage3dDriver(antiAlias);
@@ -227,11 +229,13 @@ class Engine {
 			width = window.width;
 			height = window.height;
 		}
-		if( disposed )
+		if( disposed ) {
+			hxd.impl.Allocator.get().onContextLost();
 			mem.onContextLost();
-		else {
+		} else {
 			mem = new h3d.impl.MemoryManager(driver);
 			mem.init();
+			nullTexture = new h3d.mat.Texture(0, 0, [NoAlloc]);
 		}
 		hardware = driver.hasFeature(HardwareAccelerated);
 		set_debug(debug);
@@ -261,8 +265,9 @@ class Engine {
 
 	function set_fullScreen(v) {
 		fullScreen = v;
-		if( mem != null && hxd.System.getValue(IsWindowed) )
-			window.setFullScreen(v);
+		if( mem != null && hxd.System.getValue(IsWindowed) ) {
+			window.displayMode = v ? Borderless : Windowed;
+		}
 		return v;
 	}
 
@@ -282,6 +287,7 @@ class Engine {
 		if( driver.isDisposed() )
 			return false;
 		// init
+		inRender = true;
 		drawTriangles = 0;
 		shaderSwitches = 0;
 		drawCalls = 0;
@@ -300,6 +306,7 @@ class Engine {
 	}
 
 	public function end() {
+		inRender = false;
 		driver.end();
 	}
 
@@ -327,15 +334,13 @@ class Engine {
 		if( t == null )
 			needFlushTarget = currentTargetTex != null;
 		else
-			needFlushTarget = currentTargetTex != t.t || currentTargetLayer != t.layer || currentTargetMip != t.mipLevel;
+			needFlushTarget = currentTargetTex != t.t || currentTargetLayer != t.layer || currentTargetMip != t.mipLevel || t.textures != null;
 	}
 
 	public function pushTargets( textures : Array<h3d.mat.Texture> ) {
-		if( nullTexture == null ) nullTexture = new h3d.mat.Texture(0, 0, [NoAlloc]);
 		pushTarget(nullTexture);
-		driver.setRenderTargets(textures);
-		currentTargetTex = nullTexture;
-		needFlushTarget = false;
+		targetStack.textures = textures;
+		needFlushTarget = true;
 	}
 
 	public function popTarget() {
@@ -346,6 +351,7 @@ class Engine {
 		updateNeedFlush();
 		// recycle
 		c.t = null;
+		c.textures = null;
 		c.next = targetTmp;
 		targetTmp = c;
 	}
@@ -360,7 +366,10 @@ class Engine {
 			driver.setRenderTarget(null);
 			currentTargetTex = null;
 		} else {
-			driver.setRenderTarget(t.t, t.layer, t.mipLevel);
+			if( t.textures != null )
+				driver.setRenderTargets(t.textures);
+			else
+				driver.setRenderTarget(t.t, t.layer, t.mipLevel);
 			currentTargetTex = t.t;
 			currentTargetLayer = t.layer;
 			currentTargetMip = t.mipLevel;

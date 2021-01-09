@@ -43,12 +43,19 @@ class HMDModel extends MeshPrimitive {
 	}
 
 	public function addAlias( name : String, realName : String, offset = 0 ) {
+		var old = bufferAliases.get(name);
+		if( old != null ) {
+			if( old.realName != realName || old.offset != offset ) throw "Conflicting alias "+name;
+			return;
+		}
 		bufferAliases.set(name, {realName : realName, offset : offset });
+		// already allocated !
+		if( bufferCache != null ) allocAlias(name);
 	}
 
 	override function alloc(engine:h3d.Engine) {
 		dispose();
-		buffer = new h3d.Buffer(data.vertexCount, data.vertexStride);
+		buffer = new h3d.Buffer(data.vertexCount, data.vertexStride, [LargeBuffer]);
 
 		var entry = lib.resource.entry;
 		entry.open();
@@ -65,11 +72,13 @@ class HMDModel extends MeshPrimitive {
 			indexesTriPos.push(Std.int(indexCount/3));
 			indexCount += n;
 		}
-		indexes = new h3d.Indexes(indexCount);
+		var is32 = data.vertexCount > 0x10000;
+		indexes = new h3d.Indexes(indexCount, is32);
 
 		entry.skip(data.indexPosition - (data.vertexPosition + size));
-		var bytes = haxe.io.Bytes.alloc(indexCount * 2);
-		entry.read(bytes, 0, indexCount * 2);
+		var imult = is32 ? 4 : 2;
+		var bytes = haxe.io.Bytes.alloc(indexCount * imult);
+		entry.read(bytes, 0, indexCount * imult);
 		indexes.uploadBytes(bytes, 0, indexCount);
 
 		entry.close();
@@ -83,13 +92,16 @@ class HMDModel extends MeshPrimitive {
 		if( normalsRecomputed != null )
 			recomputeNormals(normalsRecomputed);
 
-		for( name in bufferAliases.keys() ) {
-			var alias = bufferAliases.get(name);
-			var buffer = bufferCache.get(hxsl.Globals.allocID(alias.realName));
-			if( buffer == null ) throw "Buffer " + alias.realName+" not found for alias " + name;
-			if( buffer.offset + alias.offset > buffer.buffer.buffer.stride ) throw "Alias " + name+" for buffer " + alias.realName+" outside stride";
-			addBuffer(name, buffer.buffer, buffer.offset + alias.offset);
-		}
+		for( name in bufferAliases.keys() )
+			allocAlias(name);
+	}
+
+	function allocAlias( name : String ) {
+		var alias = bufferAliases.get(name);
+		var buffer = bufferCache.get(hxsl.Globals.allocID(alias.realName));
+		if( buffer == null ) throw "Buffer " + alias.realName+" not found for alias " + name;
+		if( buffer.offset + alias.offset > buffer.buffer.buffer.stride ) throw "Alias " + name+" for buffer " + alias.realName+" outside stride";
+		addBuffer(name, buffer.buffer, buffer.offset + alias.offset);
 	}
 
 	public function recomputeNormals( ?name : String ) {
@@ -102,10 +114,12 @@ class HMDModel extends MeshPrimitive {
 
 		for( i in 0...data.vertexCount ) {
 			var added = false;
-			var pt = new h3d.col.Point(pos.vertexes[i * 3], pos.vertexes[i * 3 + 1], pos.vertexes[i * 3 + 2]);
+			var px = pos.vertexes[i * 3];
+			var py = pos.vertexes[i * 3 + 1];
+			var pz = pos.vertexes[i * 3 + 2];
 			for(i in 0...pts.length) {
 				var p = pts[i];
-				if(p.x == pt.x && p.y == pt.y && p.z == pt.z) {
+				if(p.x == px && p.y == py && p.z == pz) {
 					ids.push(i);
 					added = true;
 					break;
@@ -113,7 +127,7 @@ class HMDModel extends MeshPrimitive {
 			}
 			if( !added ) {
 				ids.push(pts.length);
-				pts.push(pt);
+				pts.push(new h3d.col.Point(px,py,pz));
 			}
 		}
 
@@ -125,11 +139,13 @@ class HMDModel extends MeshPrimitive {
 		pol.addNormals();
 
 		var v = new hxd.FloatBuffer();
+		v.grow(data.vertexCount*3);
+		var k = 0;
 		for( i in 0...data.vertexCount ) {
 			var n = pol.normals[ids[i]];
-			v.push(n.x);
-			v.push(n.y);
-			v.push(n.z);
+			v[k++] = n.x;
+			v[k++] = n.y;
+			v[k++] = n.z;
 		}
 		var buf = h3d.Buffer.ofFloats(v, 3);
 		addBuffer(name, buf, 0);

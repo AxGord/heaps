@@ -44,7 +44,8 @@ class Camera {
 	public var frustum(default, null) : h3d.col.Frustum;
 
 	var minv : Matrix;
-	var miview : Matrix;
+	var mcamInv : Matrix;
+	var mprojInv : Matrix;
 	var needInv : Bool;
 
 	public function new( fovY = 25., zoom = 1., screenRatio = 1.333333, zNear = 0.02, zFar = 4000., rightHanded = false ) {
@@ -104,16 +105,29 @@ class Camera {
 	}
 
 	/**
+		Returns the inverse of the camera matrix projection. Cache the result until the next update().
+	**/
+	public function getInverseProj() {
+		if( mprojInv == null ) {
+			mprojInv = new h3d.Matrix();
+			mprojInv._44 = 0;
+		}
+		if( mprojInv._44 == 0 )
+			mprojInv.initInverse(mproj);
+		return mprojInv;
+	}
+
+	/**
 		Returns the inverse of the camera matrix view only. Cache the result until the next update().
 	**/
 	public function getInverseView() {
-		if( miview == null ) {
-			miview = new h3d.Matrix();
-			miview._44 = 0;
+		if( mcamInv == null ) {
+			mcamInv = new h3d.Matrix();
+			mcamInv._44 = 0;
 		}
-		if( miview._44 == 0 )
-			miview.initInverse(mcam);
-		return miview;
+		if( mcamInv._44 == 0 )
+			mcamInv.initInverse(mcam);
+		return mcamInv;
 	}
 
 	/**
@@ -156,10 +170,10 @@ class Camera {
 
 	public function update() {
 		if( follow != null ) {
-			pos.set(0, 0, 0);
-			target.set(0, 0, 0);
-			follow.pos.localToGlobal(pos);
-			follow.target.localToGlobal(target);
+			var fpos = follow.pos.localToGlobal();
+			var ftarget = follow.target.localToGlobal();
+			pos.set(fpos.x, fpos.y, fpos.z);
+			target.set(ftarget.x, ftarget.y, ftarget.z);
 			// Animate FOV
 			if( follow.pos.name != null ) {
 				var p = follow.pos;
@@ -181,35 +195,43 @@ class Camera {
 		m.multiply(mcam, mproj);
 
 		needInv = true;
-		if( miview != null ) miview._44 = 0;
+		if( mcamInv != null ) mcamInv._44 = 0;
+		if( mprojInv != null ) mprojInv._44 = 0;
 
 		frustum.loadMatrix(m);
 	}
 
-	public function getFrustumCorners() : Array<h3d.Vector> {
+	public function getFrustumCorners(zMax=1., zMin=0.) : Array<h3d.Vector> {
 		return [
-			unproject(-1, 1, 0), unproject(1, 1, 0), unproject(1, -1, 0), unproject(-1, -1, 0),
-			unproject(-1, 1, 1), unproject(1, 1, 1), unproject(1, -1, 1), unproject(-1, -1, 1)
+			unproject(-1, 1, zMin), unproject(1, 1, zMin), unproject(1, -1, zMin), unproject(-1, -1, zMin),
+			unproject(-1, 1, zMax), unproject(1, 1, zMax), unproject(1, -1, zMax), unproject(-1, -1, zMax)
 		];
 	}
 
 	public function lostUp() {
 		var p2 = pos.clone();
 		p2.normalize();
-		return Math.abs(p2.dot3(up)) > 0.999;
+		return Math.abs(p2.dot(up)) > 0.999;
+	}
+
+	public function getViewDirection( dx : Float, dy : Float, dz = 0. ) {
+		var a = new h3d.col.Point(dx,dy,dz);
+		a.transform3x3(mcam);
+		a.normalize();
+		return a;
 	}
 
 	public function movePosAxis( dx : Float, dy : Float, dz = 0. ) {
-		var p = new Vector(dx, dy, dz);
-		p.project(mcam);
+		var p = new h3d.col.Point(dx, dy, dz);
+		p.transform3x3(mcam);
 		pos.x += p.x;
 		pos.y += p.y;
 		pos.z += p.z;
 	}
 
 	public function moveTargetAxis( dx : Float, dy : Float, dz = 0. ) {
-		var p = new Vector(dx, dy, dz);
-		p.project(mcam);
+		var p = new h3d.col.Point(dx, dy, dz);
+		p.transform3x3(mcam);
 		target.x += p.x;
 		target.y += p.y;
 		target.z += p.z;
@@ -238,10 +260,10 @@ class Camera {
 		// this way we make sure that our [ax,ay,-az] matrix follow the same handness as our world
 		// We build a transposed version of Matrix.lookAt
 		var az = target.sub(pos);
-		if( rightHanded ) az.scale3(-1);
-		az.normalizeFast();
+		if( rightHanded ) az.scale(-1);
+		az.normalize();
 		var ax = up.cross(az);
-		ax.normalizeFast();
+		ax.normalize();
 		if( ax.length() == 0 ) {
 			ax.x = az.y;
 			ax.y = az.z;
@@ -260,9 +282,9 @@ class Camera {
 		m._32 = ay.z;
 		m._33 = az.z;
 		m._34 = 0;
-		m._41 = -ax.dot3(pos);
-		m._42 = -ay.dot3(pos);
-		m._43 = -az.dot3(pos);
+		m._41 = -ax.dot(pos);
+		m._42 = -ay.dot(pos);
+		m._43 = -az.dot(pos);
 		m._44 = 1;
 	}
 

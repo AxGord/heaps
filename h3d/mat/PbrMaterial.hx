@@ -2,6 +2,7 @@ package h3d.mat;
 
 @:enum abstract PbrMode(String) {
 	var PBR = "PBR";
+	var Forward = "Forward";
 	var Overlay = "Overlay";
 	var Decal = "Decal";
 	var BeforeTonemapping = "BeforeTonemapping";
@@ -61,7 +62,7 @@ typedef PbrProps = {
 	@:optional var alphaKill : Bool;
 	@:optional var emissive : Float;
 	@:optional var parallax : Float;
-	
+
 	var enableStencil : Bool;
 	@:optional var stencilCompare : PbrStencilCompare;
 	@:optional var stencilPassOp : PbrStencilOp;
@@ -80,6 +81,22 @@ class PbrMaterial extends Material {
 		if( mainPass != null ) {
 			mainPass.setBlendMode(b);
 			mainPass.depthWrite = b == None;
+			var am = mainPass.getShader(h3d.shader.pbr.AlphaMultiply);
+			if( b == AlphaMultiply ) {
+				if( am == null ) {
+					am = new h3d.shader.pbr.AlphaMultiply();
+					am.setPriority(-1);
+					mainPass.addShader(am);
+				}
+			} else if( am != null )
+				mainPass.removeShader(am);
+			if( props == null || (props:PbrProps).mode == PBR ) {
+				mainPass.setPassName(switch( b ) {
+				case Add, AlphaAdd, SoftAdd: "additive";
+				case Alpha, AlphaMultiply: "alpha";
+				default: "default";
+				});
+			}
 		}
 		return this.blendMode = b;
 	}
@@ -162,16 +179,18 @@ class PbrMaterial extends Material {
 
 	function resetProps() {
 		var props : PbrProps = props;
+		mainPass.enableLights = true;
 		// Remove superfluous shader
 		mainPass.removeShader(mainPass.getShader(h3d.shader.VolumeDecal));
 		mainPass.removeShader(mainPass.getShader(h3d.shader.pbr.StrengthValues));
 		mainPass.removeShader(mainPass.getShader(h3d.shader.pbr.AlphaMultiply));
 		mainPass.removeShader(mainPass.getShader(h3d.shader.Parallax));
 		mainPass.removeShader(mainPass.getShader(h3d.shader.Emissive));
+		mainPass.removeShader(mainPass.getShader(h3d.shader.pbr.GammaCorrect));
 		// Backward compatibility
-		if( !Reflect.hasField(props, "depthTest") ) Reflect.setField(props, "depthTest", Less);
-		if( !Reflect.hasField(props, "colorMask") ) Reflect.setField(props, "colorMask", 1 << 0 | 1 << 1 | 1 << 2 | 1 << 3);
-		if( !Reflect.hasField(props, "enableStencil") ) Reflect.setField(props, "enableStencil", false);
+		if( props.depthTest == null ) props.depthTest = Less;
+		if( (props:Dynamic).colorMask == null ) props.colorMask = 15;
+		if( (props:Dynamic).enableStencil == null ) props.enableStencil = false;
 		// Remove unused fields
 		if( props.emissive == 0 )
 			Reflect.deleteField(props,"emissive");
@@ -183,7 +202,7 @@ class PbrMaterial extends Material {
 			Reflect.deleteField(props, "depthFailOp");
 			Reflect.deleteField(props, "stencilPassOp");
 			Reflect.deleteField(props, "stencilCompare");
-		} 
+		}
 	}
 
 	override function refreshProps() {
@@ -193,11 +212,25 @@ class PbrMaterial extends Material {
 		// Preset
 		switch( props.mode ) {
 		case PBR:
-			mainPass.setPassName("default");
+			// pass name set below (in set_blendMode)
+		case Forward:
+			mainPass.setPassName("forward");
 		case BeforeTonemapping:
 			mainPass.setPassName("beforeTonemapping");
-			if( props.emissive > 0 ) 
-				mainPass.addShader(new h3d.shader.Emissive(props.emissive));
+			if( props.emissive > 0 ) {
+				var e = mainPass.getShader(h3d.shader.Emissive);
+				if( e == null ) {
+					e = new h3d.shader.Emissive(props.emissive);
+					e.setPriority(-1);
+					mainPass.addShader(e);
+				}
+			}
+			var gc = mainPass.getShader(h3d.shader.pbr.GammaCorrect);
+			if( gc == null ) {
+				gc = new h3d.shader.pbr.GammaCorrect();
+				gc.setPriority(-1);
+				mainPass.addShader(gc);
+			}
 		case AfterTonemapping:
 			mainPass.setPassName("afterTonemapping");
 		case Distortion:
@@ -222,29 +255,12 @@ class PbrMaterial extends Material {
 
 		// Blend modes
 		switch( props.blend ) {
-		case None:
-			mainPass.setBlendMode(None);
-			mainPass.depthWrite = true;
-		case Alpha:
-			mainPass.setBlendMode(Alpha);
-			mainPass.depthWrite = false;
-		case Add:
-			mainPass.setBlendMode(Add);
-			mainPass.depthWrite = false;
-		case AlphaAdd:
-			mainPass.setBlendMode(AlphaAdd);
-			mainPass.depthWrite = false;
-		case Multiply:
-			mainPass.setBlendMode(Multiply);
-			mainPass.depthWrite = false;
-		case AlphaMultiply:
-			if( mainPass.getShader(h3d.shader.pbr.AlphaMultiply) == null ) {
-				var s = new h3d.shader.pbr.AlphaMultiply();
-				s.setPriority(-1);
-				mainPass.addShader(s);
-			}
-			mainPass.setBlendMode(AlphaMultiply);
-			mainPass.depthWrite = false;
+		case None: this.blendMode = None;
+		case Alpha: this.blendMode = Alpha;
+		case Add: this.blendMode = Add;
+		case AlphaAdd: this.blendMode = AlphaAdd;
+		case Multiply: this.blendMode = Multiply;
+		case AlphaMultiply: this.blendMode = AlphaMultiply;
 		}
 
 		// Enable/Disable AlphaKill
@@ -304,9 +320,9 @@ class PbrMaterial extends Material {
 
 	function setColorMask() {
 		var props : PbrProps = props;
-		mainPass.setColorMask(	props.colorMask & (1<<0) > 0 ? true : false, 
-								props.colorMask & (1<<1) > 0 ? true : false, 
-								props.colorMask & (1<<2) > 0 ? true : false, 
+		mainPass.setColorMask(	props.colorMask & (1<<0) > 0 ? true : false,
+								props.colorMask & (1<<1) > 0 ? true : false,
+								props.colorMask & (1<<2) > 0 ? true : false,
 								props.colorMask & (1<<3) > 0 ? true : false);
 	}
 
@@ -314,13 +330,13 @@ class PbrMaterial extends Material {
 		var props : PbrProps = props;
 		if( props.enableStencil ) {
 
-			if( !Reflect.hasField(props, "stencilFailOp") ) 	Reflect.setField(props, "stencilFailOp", Keep);
-			if( !Reflect.hasField(props, "depthFailOp") ) 		Reflect.setField(props, "depthFailOp", Keep);
-			if( !Reflect.hasField(props, "stencilPassOp") ) 	Reflect.setField(props, "stencilPassOp", Replace);
-			if( !Reflect.hasField(props, "stencilCompare") ) 	Reflect.setField(props, "stencilCompare", Always);
-			if( !Reflect.hasField(props, "stencilValue") ) 		Reflect.setField(props, "stencilValue", 0);
-			if( !Reflect.hasField(props, "stencilReadMask") ) 	Reflect.setField(props, "stencilReadMask", 0);
-			if( !Reflect.hasField(props, "stencilWriteMask") ) 	Reflect.setField(props, "stencilWriteMask", 0);
+			if( props.stencilFailOp == null ) props.stencilFailOp = Keep;
+			if( props.depthFailOp == null ) props.depthFailOp = Keep;
+			if( props.stencilPassOp == null ) props.stencilPassOp = Replace;
+			if( props.stencilCompare == null ) props.stencilCompare = Always;
+			if( props.stencilValue == null ) props.stencilValue = 0;
+			if( props.stencilReadMask == null ) props.stencilReadMask = 0;
+			if( props.stencilWriteMask == null ) props.stencilWriteMask = 0;
 
 			inline function getStencilOp( op : PbrStencilOp ) : Data.StencilOp {
 				return switch op {
@@ -405,7 +421,7 @@ class PbrMaterial extends Material {
 	override function clone( ?m : BaseMaterial ) : BaseMaterial {
 		var m = m == null ? new PbrMaterial() : cast m;
 		super.clone(m);
-			return m;
+		return m;
 	}
 
 	#if editor
@@ -417,6 +433,7 @@ class PbrMaterial extends Material {
 				<dd>
 					<select field="mode">
 						<option value="PBR">PBR</option>
+						<option value="Forward">Forward PBR</option>
 						<option value="BeforeTonemapping">Before Tonemapping</option>
 						<option value="AfterTonemapping">After Tonemapping</option>
 						<option value="Overlay">Overlay</option>

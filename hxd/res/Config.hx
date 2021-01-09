@@ -3,7 +3,6 @@ package hxd.res;
 enum Platform {
 	Flash;
 	HL;
-	Cpp;
 	JS;
 	Unknown;
 }
@@ -18,10 +17,11 @@ class Config {
 		Maps the extension to a given resource class. Example ["wav,mp3,ogg" => "hxd.res.Sound"]
 	**/
 	public static var extensions = [
-		"jpg,png,jpeg,gif,tga" => "hxd.res.Image",
+		"jpg,png,jpeg,gif,tga,dds,hdr" => "hxd.res.Image",
 		"fbx,hmd" => "hxd.res.Model",
 		"ttf" => "hxd.res.Font",
 		"fnt" => "hxd.res.BitmapFont",
+		"bdf" => "hxd.res.BDFFont",
 		"wav,mp3,ogg" => "hxd.res.Sound",
 		"tmx" => "hxd.res.TiledMap",
 		"atlas" => "hxd.res.Atlas",
@@ -65,7 +65,6 @@ class Config {
 		var pf =
 			if( defined("flash") ) Flash else
 			if( defined("js") ) JS else
-			if( defined("cpp") ) Cpp else
 			if( defined("hl") ) HL else
 			Unknown;
 		switch( pf ) {

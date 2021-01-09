@@ -66,6 +66,20 @@ class Matrix {
 		_41 = 0.0; _42 = 0.0; _43 = 0.0; _44 = 1.0;
 	}
 
+	public function isIdentity() {
+		if( _41 != 0 || _42 != 0 || _43 != 0 )
+			return false;
+		if( _11 != 1 || _22 != 1 || _33 != 1 )
+			return false;
+		if( _12 != 0 || _13 != 0 || _14 != 0 )
+			return false;
+		if( _21 != 0 || _23 != 0 || _24 != 0 )
+			return false;
+		if( _31 != 0 || _32 != 0 || _34 != 0 )
+			return false;
+		return _44 == 1;
+	}
+
 	public function initRotationX( a : Float ) {
 		var cos = Math.cos(a);
 		var sin = Math.sin(a);
@@ -347,6 +361,12 @@ class Matrix {
 		initInverse(this);
 	}
 
+	public function getInverse( ?m : h3d.Matrix ) {
+		if( m == null ) m = new h3d.Matrix();
+		m.initInverse(this);
+		return m;
+	}
+
 	public inline function getDeterminant() {
 		return _11 * (_22*_33 - _23*_32) + _12 * (_23*_31 - _21*_33) + _13 * (_21*_32 - _22*_31);
 	}
@@ -476,19 +496,19 @@ class Matrix {
 
 	public inline function front() {
         var v = new h3d.Vector(_11, _12, _13);
-        v.normalizeFast();
+        v.normalize();
         return v;
     }
 
     public inline function right() {
         var v = new h3d.Vector(_21, _22, _23);
-        v.normalizeFast();
+        v.normalize();
         return v;
     }
 
     public inline function up() {
         var v = new h3d.Vector(_31, _32, _33);
-        v.normalizeFast();
+        v.normalize();
         return v;
     }
 
@@ -602,10 +622,10 @@ class Matrix {
 
 	public function colorSaturate( sat : Float ) {
 		sat += 1;
-		var is = 1 - sat;
-		var r = is * lumR;
-		var g = is * lumG;
-		var b = is * lumB;
+		var ins = 1 - sat;
+		var r = ins * lumR;
+		var g = ins * lumG;
+		var b = ins * lumB;
 		var tmp = tmp;
 		tmp._11 = r + sat;
 		tmp._12 = r;
@@ -732,6 +752,17 @@ class Matrix {
 		if( col.gain != null ) colorGain(col.gain.color, col.gain.alpha);
 	}
 
+	public inline function toMatrix2D( ?m : h2d.col.Matrix ) {
+		if( m == null ) m = new h2d.col.Matrix();
+		m.a = _11;
+		m.b = _12;
+		m.c = _21;
+		m.d = _22;
+		m.x = tx;
+		m.y = ty;
+		return m;
+	}
+
 	// STATICS
 
 	public static function I() {
@@ -770,8 +801,8 @@ class Matrix {
 	public static function lookAtX( dir : Vector, ?up : Vector, ?m : Matrix ) {
 		if( up == null ) up = new Vector(0, 0, 1);
 		if( m == null ) m = new Matrix();
-		var ax = dir.getNormalized();
-		var ay = up.cross(ax).getNormalized();
+		var ax = dir.normalized();
+		var ay = up.cross(ax).normalized();
 		if( ay.lengthSq() < Math.EPSILON ) {
 			ay.x = ax.y;
 			ay.y = ax.z;

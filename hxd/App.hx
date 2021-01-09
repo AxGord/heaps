@@ -66,11 +66,14 @@ class App implements h3d.IDrawable {
 	public function setScene( scene : hxd.SceneEvents.InteractiveScene, disposePrevious = true ) {
 		var new2D = hxd.impl.Api.downcast(scene, h2d.Scene);
 		var new3D = hxd.impl.Api.downcast(scene, h3d.scene.Scene);
-		if( new2D != null )
+		if( new2D != null ) {
 			sevents.removeScene(s2d);
-		if( new3D != null )
-			sevents.removeScene(s3d);
-		sevents.addScene(scene);
+			sevents.addScene(scene, 0);
+		} else {
+			if( new3D != null )
+				sevents.removeScene(s3d);
+			sevents.addScene(scene);
+		}
 		if( disposePrevious ) {
 			if( new2D != null )
 				s2d.dispose();
@@ -83,6 +86,21 @@ class App implements h3d.IDrawable {
 			this.s2d = new2D;
 		if( new3D != null )
 			this.s3d = new3D;
+	}
+
+	/**
+	 * When using multiple hxd.App, this will set the current App (the one on which update etc. will be called)
+	**/
+	public function setCurrent() {
+		engine = h3d.Engine.getCurrent(); // if was changed
+		isDisposed = false;
+		engine.onReady = staticHandler; // in case we have another pending app
+		engine.onResized = function() {
+			if( s2d == null ) return; // if disposed
+			s2d.checkResize();
+			onResize();
+		};
+		hxd.System.setLoop(mainLoop);
 	}
 
 	function setScene2D( s2d : h2d.Scene, disposePrevious = true ) {
@@ -133,9 +151,9 @@ class App implements h3d.IDrawable {
 		engine.onResized = staticHandler;
 		engine.onContextLost = staticHandler;
 		isDisposed = true;
-		s2d.dispose();
-		s3d.dispose();
-		sevents.dispose();
+		if( s2d != null ) s2d.dispose();
+		if( s3d != null ) s3d.dispose();
+		if( sevents != null ) sevents.dispose();
 	}
 
 	/**
@@ -169,8 +187,8 @@ class App implements h3d.IDrawable {
 		update(hxd.Timer.dt);
 		if( isDisposed ) return;
 		var dt = hxd.Timer.dt; // fetch again in case it's been modified in update()
-		s2d.setElapsedTime(dt);
-		s3d.setElapsedTime(dt);
+		if( s2d != null ) s2d.setElapsedTime(dt);
+		if( s3d != null ) s3d.setElapsedTime(dt);
 		engine.render(this);
 	}
 

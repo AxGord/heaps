@@ -26,6 +26,9 @@ class MacroParser {
 		case [ { expr : EConst(CInt(a)) } ] if( m.name == "perInstance" ):
 			v.qualifiers.push(PerInstance(Std.parseInt(a)));
 			return;
+		case [ { expr: EConst(CString(s)), pos: pos } ] if (m.name == "doc"):
+			v.qualifiers.push(Doc(s));
+			return;
 		default:
 			error("Invalid meta parameter for "+m.name, m.pos);
 		}
@@ -82,6 +85,7 @@ class MacroParser {
 			case "Mat4": return TMat4;
 			case "Mat3": return TMat3;
 			case "Mat3x4": return TMat3x4;
+			case "Mat2": return TMat2;
 			case "String": return TString;
 			case "Sampler2D": return TSampler2D;
 			case "Sampler2DArray": return TSampler2DArray;
@@ -165,7 +169,11 @@ class MacroParser {
 					qualifiers : [],
 				}
 			}]);
+		#if haxe4
+		case EFunction(FNamed(name,_),f) if( f.expr != null ):
+		#else
 		case EFunction(name, f) if( name != null && f.expr != null ):
+		#end
 			EFunction({
 				name : name,
 				ret : f.ret == null ? null : (switch( f.ret ) {
@@ -238,6 +246,8 @@ class MacroParser {
 			ESwitch(parseExpr(e), [for( c in cases ) { expr : c.expr == null ? { expr : EBlock([]), pos : c.values[0].pos } : parseExpr(c.expr), values : [for( v in c.values ) parseExpr(v)] }], def == null ? null : parseExpr(def));
 		case EWhile(cond, e, normalWhile):
 			EWhile(parseExpr(cond), parseExpr(e), normalWhile);
+		case EObjectDecl([]):
+			EBlock([]);
 		default:
 			null;
 		};

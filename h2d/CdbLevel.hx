@@ -4,17 +4,26 @@ package h2d;
 "Please compile with -lib castle"
 #end
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 typedef TileSpec = {
 	var file(default, never) : String;
 	var stride(default, never) : Int;
 	var size(default, never) : Int;
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 typedef LayerSpec = {
 	var name : String;
 	var data : cdb.Types.TileLayer;
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 typedef LevelSpec = {
 	var width : Int;
 	var height : Int;
@@ -23,6 +32,9 @@ typedef LevelSpec = {
 	var layers : Array<LayerSpec>;
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 class LevelTileset {
 	public var stride : Int;
 	public var size : Int;
@@ -31,6 +43,7 @@ class LevelTileset {
 	public var tiles : Array<h2d.Tile>;
 	public var objects : Array<LevelObject>;
 	public var groups : Map<String, LevelGroup>;
+	public var groupsById : Array<LevelGroup>;
 	public var tilesProps(get, never) : Array<Dynamic>;
 	var props :	cdb.Data.TilesetProps;
 	var tileBuilder : cdb.TileBuilder;
@@ -44,6 +57,9 @@ class LevelTileset {
 	}
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 class LevelObject {
 	public var tileset : LevelTileset;
 	public var id : Int;
@@ -66,9 +82,13 @@ class LevelObject {
 	}
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 class LevelGroup {
 	public var tileset : LevelTileset;
 	public var name : String;
+	public var id : Int;
 	public var x : Int;
 	public var y : Int;
 	public var width : Int;
@@ -80,6 +100,7 @@ class LevelGroup {
 		this.tileset = tset;
 		this.x = x;
 		this.y = y;
+		id = x + y * tileset.stride;
 		this.name = name;
 		width = w;
 		height = h;
@@ -89,6 +110,9 @@ class LevelGroup {
 	}
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 class LevelObjectInstance {
 	public var x : Int;
 	public var y : Int;
@@ -99,12 +123,18 @@ class LevelObjectInstance {
 	}
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 enum LevelLayerData {
 	LTiles( data : Array<Int> );
 	LGround( data : Array<Int> );
 	LObjects( objects : Array<LevelObjectInstance> );
 }
 
+/**
+	[CastleDB](http://castledb.org) integration; A part of `CdbLevel` decoder.
+**/
 class LevelLayer {
 
 	/**
@@ -240,7 +270,7 @@ class LevelLayer {
 }
 
 /**
-	CdbLevel will decode and display a level created with the CastleDB level editor.
+	A decoder and renderer for levels created with the CastleDB 2D level editor.
 	See http://castledb.org for more details.
 **/
 class CdbLevel extends Layers {
@@ -393,6 +423,7 @@ class CdbLevel extends Layers {
 		t.tile = t.res.toTile();
 		t.tiles = t.tile.gridFlatten(t.size);
 		t.objects = [];
+		t.groupsById = [];
 		t.groups = new Map<String, LevelGroup>();
 		var tprops = Reflect.field(levelsProps.tileSets, ldat.file);
 		@:privateAccess t.props = tprops;
@@ -405,10 +436,9 @@ class CdbLevel extends Layers {
 					t.objects[o.id] = o;
 				case Group:
 					var name = s.opts.name;
-					if (name != null) {
-						var g = new LevelGroup(name, t, s.x, s.y, s.w, s.h, s.opts.value);
-						t.groups.set(name, g);
-					}
+					var g = new LevelGroup(name, t, s.x, s.y, s.w, s.h, s.opts.value);
+					if (name != null) t.groups.set(name, g);
+					t.groupsById[g.id] = g;
 				case Ground, Border, Tile:
 					// nothing
 				}

@@ -86,7 +86,6 @@ class Lights extends SampleApp {
 		sp.setPosition(-30,-30,30);
 		sp.setDirection(new h3d.Vector(1,2,-5));
 		sp.range = 70;
-		sp.maxRange = 70;
 		sp.angle = 70;
 		sp.color.scale3(10);
 
@@ -142,7 +141,7 @@ class Lights extends SampleApp {
 			m.m.x = m.cx + Math.cos(m.pos) * m.ray;
 			m.m.y = m.cy + Math.sin(m.pos) * m.ray;
 
-			var cc = Std.instance(m.m.cullingCollider, h3d.col.Sphere);
+			var cc = hxd.impl.Api.downcast(m.m.cullingCollider, h3d.col.Sphere);
 			if( cc != null ) {
 				var absPos = m.m.getAbsPos();
 				cc.x = absPos.tx;

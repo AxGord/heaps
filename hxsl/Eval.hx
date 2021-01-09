@@ -70,6 +70,31 @@ class Eval {
 		return v2;
 	}
 
+	function checkSamplerRec(t:Type) {
+		if( t.isSampler() )
+			return true;
+		switch( t ) {
+		case TStruct(vl):
+			for( v in vl )
+				if( checkSamplerRec(v.type) )
+					return true;
+			return false;
+		case TArray(t, _):
+			return checkSamplerRec(t);
+		case TBuffer(_, size):
+			return true;
+		default:
+		}
+		return false;
+	}
+
+	function needsInline(f:TFunction) {
+		for( a in f.args )
+			if( checkSamplerRec(a.type) )
+				return true;
+		return false;
+	}
+
 	public function eval( s : ShaderData ) : ShaderData {
 		var funs = [];
 		for( f in s.funs ) {
@@ -80,9 +105,10 @@ class Eval {
 				ret : f.ret,
 				expr : f.expr,
 			};
-			if( !inlineCalls || f.kind != Helper )
+			if( (f.kind == Helper && inlineCalls) || needsInline(f2) )
+				funMap.set(f2.ref, f);
+			else
 				funs.push(f2);
-			funMap.set(f2.ref, f);
 		}
 		for( i in 0...funs.length ) {
 			curFun = funs[i];
@@ -213,6 +239,12 @@ class Eval {
 		return [for( c in constants.keys() ) c + " => " + Printer.toString({ e : constants.get(c), t : TVoid, p : null }, true)].toString();
 	}
 
+	function ifBlock( e : TExpr ) {
+		if( e == null || !e.e.match(TIf(_)) )
+			return e;
+		return { e : TBlock([e]), t : e.t, p : e.p };
+	}
+
 	function evalExpr( e : TExpr, isVal = true ) : TExpr {
 		var d : TExprDef = switch( e.e ) {
 		case TGlobal(_), TConst(_): e.e;
@@ -246,8 +278,6 @@ class Eval {
 			case TGlobal(g):
 				var v = evalCall(g, args, eargs, e.p);
 				if( v != null ) v else TCall(c, args);
-			case TVar(_) if( !inlineCalls ):
-				TCall(c, args);
 			case TVar(v) if( funMap.exists(v) ):
 				// inline the function call
 				var f = funMap.get(v);
@@ -282,6 +312,8 @@ class Eval {
 					outExprs.push(e);
 				}
 				TBlock(outExprs);
+			case TVar(_):
+				TCall(c, args);
 			default:
 				Error.t("Cannot eval non-static call expresssion '" + new Printer().exprString(c)+"'", c.p);
 			}
@@ -419,6 +451,8 @@ class Eval {
 						eelse = evalExpr(eelse,isVal);
 						if( eelse.e.match(TConst(CNull)) ) eelse = null;
 					}
+					eif = ifBlock(eif);
+					eelse = ifBlock(eelse);
 					TIf(econd, eif, eelse);
 				}
 			}
@@ -441,14 +475,14 @@ class Eval {
 				constants.remove(v.id);
 				TBlock(out);
 			default:
-				TFor(v2, it, evalExpr(loop,false));
+				TFor(v2, it, ifBlock(evalExpr(loop,false)));
 			}
 			varMap.remove(v);
 			e;
 		case TWhile(cond, loop, normalWhile):
 			var cond = evalExpr(cond);
 			var loop = evalExpr(loop, false);
-			TWhile(cond, loop, normalWhile);
+			TWhile(cond, ifBlock(loop), normalWhile);
 		case TSwitch(e, cases, def):
 			var e = evalExpr(e);
 			var cases = [for( c in cases ) { values : [for( v in c.values ) evalExpr(v)], expr : evalExpr(c.expr, isVal) }];

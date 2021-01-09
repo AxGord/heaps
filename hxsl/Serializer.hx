@@ -94,7 +94,7 @@ class Serializer {
 			}
 		case TChannel(size):
 			out.addByte(size);
-		case TVoid, TInt, TBool, TFloat, TString, TMat3, TMat4, TMat3x4, TSampler2D, TSampler2DArray, TSamplerCube:
+		case TVoid, TInt, TBool, TFloat, TString, TMat2, TMat3, TMat4, TMat3x4, TSampler2D, TSampler2DArray, TSamplerCube:
 		}
 	}
 
@@ -141,6 +141,7 @@ class Serializer {
 			TBuffer(t, v == null ? SConst(readVarInt()) : SVar(v));
 		case 17:
 			TChannel(input.readByte());
+		case 18: TMat2;
 		default:
 			throw "assert";
 		}
@@ -183,6 +184,7 @@ class Serializer {
 				case Precision(p): out.addByte(p.getIndex());
 				case Range(min, max): out.addDouble(min); out.addDouble(max);
 				case PerInstance(v): out.addInt32(v);
+				case Doc(s): writeString(s);
 				}
 			}
 		}
@@ -396,6 +398,7 @@ class Serializer {
 				case 7: Range(input.readDouble(), input.readDouble());
 				case 8: Ignore;
 				case 9: PerInstance(input.readInt32());
+				case 10: Doc(readString());
 				default: throw "assert";
 				}
 				v.qualifiers.push(q);
@@ -415,7 +418,7 @@ class Serializer {
 			expr : readExpr(),
 		};
 	}
-	
+
 	static var SIGN = 0x8B741D; // will be encoded to HXSL
 
 	public function unserialize( data : String ) : ShaderData {

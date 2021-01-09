@@ -15,31 +15,19 @@ typedef Query = {};
 #elseif js
 typedef IndexBuffer = { b : js.html.webgl.Buffer, is32 : Bool };
 typedef VertexBuffer = { b : js.html.webgl.Buffer, stride : Int #if multidriver, driver : Driver #end };
-typedef Texture = { t : js.html.webgl.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int #if multidriver, driver : Driver #end };
+typedef Texture = { t : js.html.webgl.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bias : Float, bind : Int #if multidriver, driver : Driver #end };
 typedef DepthBuffer = { r : js.html.webgl.Renderbuffer #if multidriver, driver : Driver #end };
-typedef Query = {};
-#elseif nme
-typedef IndexBuffer = nme.gl.GLBuffer;
-typedef VertexBuffer = { b : nme.gl.GLBuffer, stride : Int };
-typedef Texture = { t : nme.gl.GLTexture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int };
-typedef DepthBuffer = { r : nme.gl.Renderbuffer };
-typedef Query = {};
-#elseif lime
-typedef IndexBuffer = lime.graphics.opengl.GLBuffer;
-typedef VertexBuffer = { b : lime.graphics.opengl.GLBuffer, stride : Int };
-typedef Texture = { t : lime.graphics.opengl.GLTexture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int };
-typedef DepthBuffer = { r : lime.graphics.opengl.GLRenderbuffer };
 typedef Query = {};
 #elseif hlsdl
 typedef IndexBuffer = { b : sdl.GL.Buffer, is32 : Bool };
 typedef VertexBuffer = { b : sdl.GL.Buffer, stride : Int };
-typedef Texture = { t : sdl.GL.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int };
+typedef Texture = { t : sdl.GL.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int, bias : Float };
 typedef DepthBuffer = { r : sdl.GL.Renderbuffer };
 typedef Query = { q : sdl.GL.Query, kind : QueryKind };
 #elseif usegl
 typedef IndexBuffer = { b : haxe.GLTypes.Buffer, is32 : Bool };
 typedef VertexBuffer = { b : haxe.GLTypes.Buffer, stride : Int };
-typedef Texture = { t : haxe.GLTypes.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int };
+typedef Texture = { t : haxe.GLTypes.Texture, width : Int, height : Int, internalFmt : Int, pixelFmt : Int, bits : Int, bind : Int, bias : Float };
 typedef DepthBuffer = { r : haxe.GLTypes.Renderbuffer };
 typedef Query = { q : haxe.GLTypes.Query, kind : QueryKind };
 #elseif hldx
@@ -105,6 +93,10 @@ enum Feature {
 		Supports rendering in wireframe mode.
 	*/
 	Wireframe;
+	/*
+		Supports instanced rendering
+	*/
+	InstancedRendering;
 }
 
 enum QueryKind {

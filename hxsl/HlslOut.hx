@@ -33,6 +33,8 @@ class HlslOut {
 		m.set(BVec2, "bool2");
 		m.set(BVec3, "bool3");
 		m.set(BVec4, "bool4");
+		m.set(FragCoord,"_in.__pos__");
+		m.set(FrontFacing, "_in.isFrontFace");
 		for( g in m )
 			KWDS.set(g, true);
 		m;
@@ -42,6 +44,7 @@ class HlslOut {
 	var SV_TARGET = "SV_TARGET";
 	var SV_VertexID = "SV_VertexID";
 	var SV_InstanceID = "SV_InstanceID";
+	var SV_IsFrontFace = "SV_IsFrontFace";
 	var STATIC = "static ";
 	var buf : StringBuf;
 	var exprIds = 0;
@@ -98,6 +101,8 @@ class HlslOut {
 			case VBool: add("bool");
 			}
 			add(size);
+		case TMat2:
+			add("float2x2");
 		case TMat3:
 			add("float3x3");
 		case TMat4:
@@ -237,7 +242,7 @@ class HlslOut {
 			addValue(args[0], tabs);
 			switch( g ) {
 			case Texture:
-				add(".Sample(");
+				add(isVertex ? ".SampleLevel(" : ".Sample(");
 			case TextureLod:
 				add(".SampleLevel(");
 			default:
@@ -259,8 +264,10 @@ class HlslOut {
 				add(",");
 				addValue(args[i],tabs);
 			}
+			if( g == Texture && isVertex )
+				add(",0");
 			add(")");
-		case TCall({ e : TGlobal(g = (Texel | TexelLod)) }, args):
+		case TCall({ e : TGlobal(g = (Texel)) }, args):
 			addValue(args[0], tabs);
 			add(".Load(");
 			switch ( args[1].t ) {
@@ -272,16 +279,28 @@ class HlslOut {
 					throw "assert";
 			}
 			addValue(args[1],tabs);
-			switch( g ) {
-				case Texel:
-					add(", 0");
-				case TexelLod:
-					add(", ");
-					addValue(args[2],tabs);
-				default:
-					throw "assert";
+			if ( args.length != 2 ) {
+				// with LOD argument
+				add(", ");
+				addValue(args[2], tabs);
+			} else {
+				add(", 0");
 			}
 			add("))");
+		case TCall({ e : TGlobal(g = (TextureSize)) }, args):
+			decl("float2 textureSize(Texture2D tex, int lod) { float w; float h; tex.GetDimensions(tex, (uint)lod, out w, out h); return float2(w, h); }");
+			decl("float3 textureSize(Texture2DArray tex, int lod) { float w; float h; float els; tex.GetDimensions(tex, (uint)lod, out w, out h, out els); return float3(w, h, els); }");
+			decl("float2 textureSize(TextureCube tex, int lod) { float w; float h; tex.GetDimensions(tex, (uint)lod, out w, out h); return float2(w, h); }");
+			add("textureSize(");
+			addValue(args[0], tabs);
+			if (args.length != 1) {
+				// With LOD argument
+				add(", ");
+				addValue(args[1],tabs);
+			} else {
+				add(", 0");
+			}
+			add(")");
 		case TCall(e = { e : TGlobal(g) }, args):
 			switch( [g,args.length] ) {
 			case [Vec2, 1] if( args[0].t == TFloat ):
@@ -315,6 +334,13 @@ class HlslOut {
 				decl("float3x3 mat3( float4x4 m ) { return (float3x3)m; }");
 				decl("float3x3 mat3( float4x3 m ) { return (float3x3)m; }");
 				decl("float3x3 mat3( float3 a, float3 b, float3 c ) { float3x3 m; m._m00_m10_m20 = a; m._m01_m11_m21 = b; m._m02_m12_m22 = c; return m; }");
+				decl("float3x3 mat3( float c00, float c01, float c02, float c10, float c11, float c12, float c20, float c21, float c22 ) { float3x3 m = { c00, c10, c20, c01, c11, c21, c02, c12, c22 }; return m; }");
+			case Mat2:
+				decl("float2x2 mat2( float4x4 m ) { return (float2x2)m; }");
+				decl("float2x2 mat2( float4x3 m ) { return (float2x2)m; }");
+				decl("float2x2 mat2( float3x3 m ) { return (float2x2)m; }");
+				decl("float2x2 mat2( float2 a, float2 b ) { float2x2 m; m._m00_m10 = a; m._m01_m11 = b; return m; }");
+				decl("float2x2 mat2( float c00, float c01, float c10, float c11 ) { float2x2 m = { c00, c10, c01, c11 }; return m; }");
 			case Mod:
 				declMods();
 			case Pow:
@@ -351,6 +377,32 @@ class HlslOut {
 			}
 			add(tabs);
 			add("}");
+		case TVarDecl(v, { e : TArrayDecl(el) }):
+			locals.set(v.id, v);
+			for( i in 0...el.length ) {
+				ident(v);
+				add("[");
+				add(i);
+				add("] = ");
+				addExpr(el[i], tabs);
+				newLine(el[i]);
+			}
+		case TBinop(OpAssign,evar = { e : TVar(_) },{ e : TArrayDecl(el) }):
+			for( i in 0...el.length ) {
+				addExpr(evar, tabs);
+				add("[");
+				add(i);
+				add("] = ");
+				addExpr(el[i], tabs);
+			}
+		case TArrayDecl(el):
+			add("{");
+			var first = true;
+			for( e in el ) {
+				if( first ) first = false else add(", ");
+				addValue(e,tabs);
+			}
+			add("}");
 		case TBinop(op, e1, e2):
 			switch( [op, e1.t, e2.t] ) {
 			case [OpAssignOp(OpMod) | OpMod, _, _]:
@@ -374,7 +426,7 @@ class HlslOut {
 				add(",1.),");
 				addValue(e2, tabs);
 				add(")");
-			case [OpMult, TVec(_), TMat3 | TMat4]:
+			case [OpMult, TVec(_), TMat2 | TMat3 | TMat4]:
 				add("mul(");
 				addValue(e1, tabs);
 				add(",");
@@ -493,14 +545,6 @@ class HlslOut {
 			add("[");
 			addValue(index, tabs);
 			add("]");
-		case TArrayDecl(el):
-			add("[");
-			var first = true;
-			for( e in el ) {
-				if( first ) first = false else add(", ");
-				addValue(e,tabs);
-			}
-			add("]");
 		case TMeta(_, _, e):
 			addExpr(e, tabs);
 		}
@@ -579,6 +623,8 @@ class HlslOut {
 			add("\tuint vertexID : "+SV_VertexID+";\n");
 		if( foundGlobals.exists(InstanceID) )
 			add("\tuint instanceID : "+SV_InstanceID+";\n");
+		if( foundGlobals.exists(FrontFacing) )
+			add("\tbool isFrontFace : "+SV_IsFrontFace+";\n");
 		add("};\n\n");
 
 		add("struct s_output {\n");

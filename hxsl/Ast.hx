@@ -19,6 +19,7 @@ enum Type {
 	TArray( t : Type, size : SizeDecl );
 	TBuffer( t : Type, size : SizeDecl );
 	TChannel( size : Int );
+	TMat2;
 }
 
 enum VecType {
@@ -82,6 +83,7 @@ enum VarQualifier {
 	Range( min : Float, max : Float );
 	Ignore; // the variable is ignored in reflection (inspector)
 	PerInstance( v : Int );
+	Doc( s : String );
 }
 
 enum Prec {
@@ -203,7 +205,7 @@ enum TGlobal {
 	Texture;
 	TextureLod;
 	Texel;
-	TexelLod;
+	TextureSize;
 	// ...other texture* operations
 	// constructors
 	ToInt;
@@ -238,11 +240,14 @@ enum TGlobal {
 	ChannelRead;
 	ChannelReadLod;
 	ChannelFetch;
-	ChannelFetchLod;
+	ChannelTextureSize;
 	Trace;
 	// instancing
 	VertexID;
 	InstanceID;
+	// gl globals
+	FragCoord;
+	FrontFacing;
 }
 
 enum Component {
@@ -310,6 +315,17 @@ class Tools {
 			default:
 			}
 		return v.name;
+	}
+
+	public static function getDoc( v : TVar ) {
+		if ( v.qualifiers == null )
+			return null;
+		for ( q in v.qualifiers )
+			switch ( q ) {
+			case Doc(s): return s;
+			default:
+			}
+		return null;
 	}
 
 	public static function getConstBits( v : TVar ) {
@@ -423,7 +439,14 @@ class Tools {
 			return hasSideEffect(e) || hasSideEffect(index);
 		case TConst(_), TVar(_), TGlobal(_):
 			return false;
-		case TVarDecl(_), TCall(_), TDiscard, TContinue, TBreak, TReturn(_):
+		case TCall(e, pl):
+			if( !e.e.match(TGlobal(_)) )
+				return true;
+			for( p in pl )
+				if( hasSideEffect(p) )
+					return true;
+			return false;
+		case TVarDecl(_), TDiscard, TContinue, TBreak, TReturn(_):
 			return true;
 		case TSwitch(e, cases, def):
 			for( c in cases ) {
@@ -498,6 +521,7 @@ class Tools {
 			var s = 0;
 			for( v in vl ) s += size(v.type);
 			return s;
+		case TMat2: 4;
 		case TMat3: 9;
 		case TMat4: 16;
 		case TMat3x4: 12;

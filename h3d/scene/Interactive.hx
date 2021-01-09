@@ -14,7 +14,7 @@ class Interactive extends Object implements hxd.SceneEvents.Interactive {
 	**/
 	@:s public var priority : Int;
 
-	public var cursor(default,set) : hxd.Cursor;
+	public var cursor(default,set) : Null<hxd.Cursor>;
 	/**
 		Set the default `cancel` mode (see `hxd.Event`), default to false.
 	**/
@@ -77,6 +77,7 @@ class Interactive extends Object implements hxd.SceneEvents.Interactive {
 			if( enableRightButton || e.button == 0 ) {
 				mouseDownButton = e.button;
 				onPush(e);
+				if( e.cancel ) mouseDownButton = -1;
 			}
 		case ERelease:
 			if( enableRightButton || e.button == 0 ) {
@@ -138,11 +139,17 @@ class Interactive extends Object implements hxd.SceneEvents.Interactive {
 		return scene != null && scene.events != null && @:privateAccess scene.events.currentFocus == this;
 	}
 
-	/** Sent when mouse enters Interactive hitbox area. **/
+	/**
+		Sent when mouse enters Interactive hitbox area.
+		`event.propagate` and `event.cancel` are ignored during `onOver`.
+		Propagation can be set with `onMove` event, as well as cancelling `onMove` will prevent `onOver`.
+	**/
 	public dynamic function onOver( e : hxd.Event ) {
 	}
 
-	/** Sent when mouse exits Interactive hitbox area. **/
+	/** Sent when mouse exits Interactive hitbox area.
+		`event.propagate` and `event.cancel` are ignored during `onOut`.
+	**/
 	public dynamic function onOut( e : hxd.Event ) {
 	}
 

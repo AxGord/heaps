@@ -42,8 +42,13 @@ class PointShadowMap extends Shadows {
 	}
 
 	override function set_mode(m:Shadows.RenderMode) {
-		pshader.enable = m != None;
+		pshader.enable = m != None && enabled;
 		return mode = m;
+	}
+
+	override function set_enabled(b:Bool) {
+		pshader.enable = b && mode != None;
+		return enabled = b;
 	}
 
 	override function set_size(s) {
@@ -72,12 +77,11 @@ class PointShadowMap extends Shadows {
 	}
 
 	override function syncShader(texture) {
-		var absPos = light.getAbsPos();
 		var pointLight = cast(light, h3d.scene.pbr.PointLight);
 		pshader.shadowMap = texture;
 		pshader.shadowBias = bias;
 		pshader.shadowPower = power;
-		pshader.lightPos = new h3d.Vector(absPos.tx, absPos.ty, absPos.tz);
+		light.getAbsPos().getPosition(pshader.lightPos);
 		pshader.zFar = pointLight.range;
 
 		// ESM
@@ -108,6 +112,26 @@ class PointShadowMap extends Shadows {
 		return buffer.getBytes();
 	}
 
+	function createStaticTexture() : h3d.mat.Texture {
+		if( staticTexture != null && staticTexture.width == size && staticTexture.width == size && staticTexture.format == format )
+			return staticTexture;
+		if( staticTexture != null )
+			staticTexture.dispose();
+		staticTexture = new h3d.mat.Texture(size, size, [Target, Cube], format);
+		staticTexture.name = "staticTexture";
+		staticTexture.preventAutoDispose();
+		staticTexture.realloc = function () {
+			if( pixelsForRealloc != null && pixelsForRealloc.length == 6 ) {
+				for( i in 0 ... 6 ) {
+					var pixels = pixelsForRealloc[i];
+					staticTexture.uploadPixels(pixels, 0, i);
+				}
+			}
+		}
+		return staticTexture;
+	}
+
+	var pixelsForRealloc : Array<hxd.Pixels> = null;
 	override function loadStaticData( bytes : haxe.io.Bytes ) {
 		if( (mode != Mixed && mode != Static) || bytes == null || bytes.length == 0 )
 			return false;
@@ -116,32 +140,41 @@ class PointShadowMap extends Shadows {
 		if( size != this.size )
 			return false;
 
-		if( staticTexture != null ) staticTexture.dispose();
-		staticTexture = new h3d.mat.Texture(size, size, [Target, Cube], format);
-		staticTexture.name = "staticTexture";
-		staticTexture.realloc = null;
-		staticTexture.preventAutoDispose();
+		createStaticTexture();
 
-		for(i in 0 ... 6){
+		pixelsForRealloc = [];
+		for( i in 0 ... 6 ) {
 			var len = buffer.readInt32();
 			var pixels = new hxd.Pixels(size, size, haxe.zip.Uncompress.run(buffer.read(len)), format);
+			pixelsForRealloc.push(pixels);
 			staticTexture.uploadPixels(pixels, 0, i);
 		}
 		syncShader(staticTexture);
+
 		return true;
 	}
 
-	static var tmpTex : h3d.mat.Texture;
+	var tmpTex : h3d.mat.Texture;
 	override function createDefaultShadowMap() {
 		if( tmpTex != null) return tmpTex;
 		tmpTex = new h3d.mat.Texture(1,1, [Target,Cube], format);
 		tmpTex.name = "defaultCubeShadowMap";
-		for(i in 0 ... 6)
-			tmpTex.clear(0xFFFFFF, i);
+		clear(tmpTex);
 		return tmpTex;
 	}
 
-	override function draw( passes, ?sort ) {
+	inline function clear( t : h3d.mat.Texture, ?layer = -1 ) {
+		if( format == RGBA )
+			t.clear(0xFFFFFF, layer);
+		else
+			t.clearF(1, 1, 1, 1, layer);
+	}
+
+	var clearDepthColor = new h3d.Vector(1,1,1,1);
+	override function draw( passes : h3d.pass.PassList, ?sort ) {
+		if( !enabled )
+			return;
+
 		if( !filterPasses(passes) )
 			return;
 
@@ -160,10 +193,10 @@ class PointShadowMap extends Shadows {
 			return;
 		}
 
-		var texture = ctx.textures.allocTarget("pointShadowMap", size, size, false, format, true);
-		if(depth == null || depth.width != size || depth.height != size || depth.isDisposed() ) {
+		var texture = ctx.computingStatic ? createStaticTexture() : ctx.textures.allocTarget("pointShadowMap", size, size, false, format, true);
+		if( depth == null || depth.width != texture.width || depth.height != texture.height || depth.isDisposed() ) {
 			if( depth != null ) depth.dispose();
-			depth = new h3d.mat.DepthBuffer(size, size);
+			depth = new h3d.mat.DepthBuffer(texture.width, texture.height);
 		}
 		texture.depthBuffer = depth;
 
@@ -175,7 +208,7 @@ class PointShadowMap extends Shadows {
 
 			// Shadows on the current face is disabled
 			if( !faceMask.has(CubeFaceFlag.createByIndex(i)) ) {
-				texture.clear(0xFFFFFF, 0, i);
+				clear(texture, i);
 				continue;
 			}
 
@@ -186,13 +219,12 @@ class PointShadowMap extends Shadows {
 			cullPasses(passes, function(col) return col.inFrustum(lightCamera.frustum));
 			if( passes.isEmpty() ) {
 				passes.load(save);
-				texture.clear(0xFFFFFF, 0, i);
+				clear(texture, i);
 				continue;
 			}
 
 			ctx.engine.pushTarget(texture, i);
-			ctx.engine.clear(0xFFFFFF, 1);
-
+			format == RGBA ? ctx.engine.clear(0xFFFFFF, i) : ctx.engine.clearF(clearDepthColor, 1);
 			super.draw(passes,sort);
 			passes.load(save);
 			ctx.engine.popTarget();
@@ -232,10 +264,5 @@ class PointShadowMap extends Shadows {
 		if( mode != Static && mode != Mixed )
 			return;
 		draw(passes);
-		var texture = pshader.shadowMap;
-		if( staticTexture != null ) staticTexture.dispose();
-		staticTexture = texture.clone();
-		staticTexture.name = "StaticPointShadowMap";
-		pshader.shadowMap = staticTexture;
 	}
 }

@@ -4,7 +4,7 @@ import haxe.macro.Expr;
 using hxsl.Ast;
 
 class Macros {
-
+	#if macro
 	static function makeType( t : Type ) : ComplexType {
 		return switch( t ) {
 		case TVoid: macro : Void;
@@ -32,7 +32,7 @@ class Macros {
 			macro : hxsl.Types.Sampler2DArray;
 		case TSamplerCube:
 			macro : hxsl.Types.SamplerCube;
-		case TMat3, TMat3x4, TMat4:
+		case TMat2, TMat3, TMat3x4, TMat4:
 			macro : hxsl.Types.Matrix;
 		case TString:
 			macro : String;
@@ -151,6 +151,7 @@ class Macros {
 					pos : pos,
 					kind : FProp("get","set", t),
 					access : [APublic],
+					doc: v.getDoc(),
 				};
 				var name = v.name + "__";
 				var initVal = null;
@@ -377,6 +378,8 @@ class Macros {
 							var tsup = csup.t.get();
 							for( f in tsup.fields.get() )
 								supFields.set(f.name, true);
+							if( tsup.module != sup && tsup.module != Context.getLocalModule() )
+								sup = tsup.module+"."+tsup.name;
 							shader = { expr : EBlock([ { expr : ECall( { expr : EIdent("extends"), pos : pos }, [ { expr : EConst(CString(sup)), pos : pos } ]), pos : pos }, shader]), pos : pos };
 							supFields.remove("updateConstants");
 							supFields.remove("getParamValue");
@@ -387,6 +390,9 @@ class Macros {
 						var name = Std.string(c);
 						var check = new Checker();
 						check.loadShader = loadShader;
+						check.warning = function(msg,pos) {
+							haxe.macro.Context.warning(msg, pos);
+						};
 						var shader = check.check(name, shader);
 						//Printer.check(shader);
 						var str = Context.defined("display") ? "" : Serializer.run(shader);
@@ -474,5 +480,5 @@ class Macros {
 		});
 		return fields;
 	}
-
+	#end
 }

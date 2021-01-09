@@ -23,7 +23,7 @@ class Embed {
 		var m = Context.getLocalClass().get().module;
 		Context.registerModuleDependency(m, file);
 
-		if( Context.defined("flash") || Context.defined("openfl") ) {
+		if( Context.defined("flash") ) {
 			if( chars == null ) // convert char list to char range
 				chars = Charset.DEFAULT_CHARS.split("-").join("\\-");
 			var pos = Context.currentPos();
@@ -104,7 +104,11 @@ class Embed {
 
 	#if js
 	static function __init__() untyped {
+		#if (haxe_ver >= 4)
+		js.Syntax.code("var hx__registerFont");
+		#else
 		__js__("var hx__registerFont");
+		#end
 		untyped hx__registerFont = function(name, data) {
 			var s = js.Browser.document.createStyleElement();
 			s.type = "text/css";

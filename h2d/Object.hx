@@ -2,16 +2,32 @@ package h2d;
 import hxd.Math;
 
 /**
-	h2d.Object is the base 2D class that all scene tree elements inherit from.
-	It can be used to create a virtual container that does not display anything but can contain other objects
+	A base 2D class that all scene tree elements inherit from.
+
+	Serves as a virtual container that does not display anything but can contain other objects
 	so the various transforms are inherited to its children.
+
+	Private events `Object.onAdd`, `Object.onRemove` and `Object.onHierarchyChanged` can be used
+	to capture when Object is added/removed from the currently active scene as well as being moved withing the object tree.
+
+	Object exposes a number of properties to control position, scale and rotation of the Object relative to its parent,
+	but they are used indirectly during rendering. Instead, they are being used to calculate the absolute matrix transform
+	relative to the Scene. As optimization, it's not recalculated as soon as properties are modified and delayed until
+	`Object.sync`. Absolute object position can be accessed through private variables `Object.matA`, `Object.matB`,
+	`Object.matC`, `Object.matD`, `Object.absX` and `Object.absY`.
+	But it should be noted that in order to ensure up-to-date values, it's advised to call `Object.syncPos` before accessing them.
 **/
 @:allow(h2d.Tools)
-class Object #if domkit implements domkit.Model<h2d.Object> #end {
+class Object #if (domkit && !domkit_heaps) implements domkit.Model<h2d.Object> #end {
 
 	static var nullDrawable : h2d.Drawable;
 
 	var children : Array<Object>;
+	/**
+		The parent container of this object.
+		See `Object.contentChanged` for more details.
+	**/
+	@:dox(show)
 	var parentContainer : Object;
 
 	/**
@@ -25,60 +41,63 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	public var numChildren(get, never) : Int;
 
 	/**
-		The name of the object, can be used to retrieve an object within a tree by using `getObjectByName` (default null)
+		The name of the object. Can be used to retrieve an object within a tree by using `Object.getObjectByName`.
 	**/
 	public var name : String;
 
 	/**
 		The x position (in pixels) of the object relative to its parent.
 	**/
-	public var x(default,set) : Float;
+	public var x(default,set) : Float = 0;
 
 	/**
 		The y position (in pixels) of the object relative to its parent.
 	**/
-	public var y(default, set) : Float;
+	public var y(default, set) : Float = 0;
 
 	/**
-		The amount of horizontal scaling of this object (default 1.0)
+		The amount of horizontal scaling of this object.
 	**/
-	public var scaleX(default,set) : Float;
+	public var scaleX(default,set) : Float = 1;
 
 	/**
-		The amount of vertical scaling of this object (default 1.0)
+		The amount of vertical scaling of this object.
 	**/
-	public var scaleY(default,set) : Float;
+	public var scaleY(default,set) : Float = 1;
 
 	/**
 		The rotation angle of this object, in radians.
 	**/
-	public var rotation(default, set) : Float;
+	public var rotation(default, set) : Float = 0;
 
 	/**
-		Is the object and its children are displayed on screen (default true).
+		Is the object and its children are displayed on screen.
 	**/
-	public var visible(default, set) : Bool;
+	public var visible(default, set) : Bool = true;
 
 	/**
-		The amount of transparency of the Object (default 1.0)
+		The amount of transparency of the Object.
 	**/
 	public var alpha : Float = 1.;
 
 	/**
 		The post process filter for this object.
+
+		When set, `Object.alpha` value affects both filter and object transparency (use `Drawable.color.a` to set transparency only for the object).
 	**/
 	public var filter(default,set) : h2d.filter.Filter;
 
 	/**
-		The blendMode of the object (default Alpha).
-		If there is no filter active, only apply to the current object (not inherited by children)
-		If there is a filter active, tells how the filter is blended with background.
+		The blending mode of the object.
+
+		If there is no `Object.filter` active, only applies to the current object (not inherited by children).
+		Otherwise tells how the filter is blended with background.
 	**/
-	public var blendMode : BlendMode;
+	public var blendMode : BlendMode = Alpha;
 
 	#if domkit
 	public var dom : domkit.Properties<h2d.Object>;
-	@:noCompletion public inline function getChildren() return children;
+	@:dox(hide) @:noCompletion public inline function getChildren() return children;
 	#end
 
 	var matA : Float;
@@ -88,19 +107,30 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	var absX : Float;
 	var absY : Float;
 
+	/**
+		A flag that indicates that the object transform was modified and absolute position recalculation is required.
+
+		Automatically cleared on `Object.sync` and can be manually synced with the `Object.syncPos`.
+	**/
+	@:dox(show)
 	var posChanged : Bool;
+	/**
+		A flag that indicates whether the object was allocated or not.
+
+		When adding children to allocated objects, `onAdd` is being called immediately,
+		otherwise it's delayed until the whole tree is added to a currently active `Scene`.
+	**/
+	@:dox(show)
 	var allocated : Bool;
 	var lastFrame : Int;
 
 	/**
-		Create a new empty object, and adds it to the parent object if not null.
+		Create a new empty object.
+		@param parent An optional parent `h2d.Object` instance to which Object adds itself if set.
 	**/
 	public function new( ?parent : Object ) {
 		matA = 1; matB = 0; matC = 0; matD = 1; absX = 0; absY = 0;
-		x = 0; y = 0; scaleX = 1; scaleY = 1; rotation = 0;
-		blendMode = Alpha;
 		posChanged = parent != null;
-		visible = true;
 		children = [];
 		if( parent != null )
 			parent.addChild(this);
@@ -108,9 +138,9 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 
 	/**
 		Return the bounds of the object for its whole content, recursively.
-		If relativeTo is null, it will return the bounds in the absolute coordinates.
-		If not, it will return the bounds relative to the specified object coordinates.
-		You can pass an already allocated bounds or getBounds will allocate one for you and return it.
+		@param relativeTo An optional object relative to coordinates of which bounds are returned.
+		Returns bounds in the absolute coordinates if not set.
+		@param out An optional bounds instance to fill. Allocates new Bounds instance and returns it if not set.
 	**/
 	public function getBounds( ?relativeTo : Object, ?out : h2d.col.Bounds ) : h2d.col.Bounds {
 		if( out == null ) out = new h2d.col.Bounds() else out.empty();
@@ -128,9 +158,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Similar to getBounds(parent), but instead of the full content, it will return
-		the size based on the alignement of the object. For instance for a text, getBounds will return
-		the full glyphs size whereas getSize() will ignore the pixels under the baseline.
+		Similar to `getBounds(parent)`, but instead of the full content, it will return
+		the size based on the alignment of the object. For instance for a text, `Object.getBounds` will return
+		the full glyphs size whereas `getSize` will ignore the pixels under the baseline.
+		@param out An optional bounds instance to fill. Allocates new Bounds instance and returns it if not set.
 	**/
 	public function getSize( ?out : h2d.col.Bounds ) : h2d.col.Bounds {
 		if( out == null ) out = new h2d.col.Bounds() else out.empty();
@@ -143,6 +174,22 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		}
 		out.offset( -x, -y);
 		return out;
+	}
+
+
+	/**
+		Returns the updated absolute position matrix. See `Object.getMatrix` for current matrix values.
+	**/
+	public function getAbsPos() {
+		syncPos();
+		var m = new h2d.col.Matrix();
+		m.a = matA;
+		m.b = matB;
+		m.c = matC;
+		m.d = matD;
+		m.x = absX;
+		m.y = absY;
+		return m;
 	}
 
 	/**
@@ -161,6 +208,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 
 	/**
 		Find several objects in the tree by calling `f` on each and returning all the not-null values returned.
+		@param arr An optional array instance to fill results with. Allocates a new array if not set.
 	**/
 	public function findAll<T>( f : Object -> Null<T>, ?arr : Array<T> ) : Array<T> {
 		if( arr == null ) arr = [];
@@ -179,6 +227,14 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		return f;
 	}
 
+	/**
+		Override this method in order to expand the reported bounds of an object. `Object.addBounds` can be used to add bounds with respect to `relativeTo`.
+		Do not remove the super call.
+		@param relativeTo An object relative to which the Object bounds coordinates should be.
+		@param out An output Bounds instance.
+		@param forSize Whether it's being called for `Object.getSize` or `Object.getBounds`.
+	**/
+	@:dox(show)
 	function getBoundsRec( relativeTo : Object, out : h2d.col.Bounds, forSize : Bool ) : Void {
 		if( posChanged ) {
 			calcAbsPos();
@@ -212,6 +268,16 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		out.yMax = ymax;
 	}
 
+	/**
+		Adds specified area in local coordinate space to the bounds. Expected to be used within `Object.getBoundsRec`.
+		@param relativeTo An object relative to which the Object bounds coordinates should be. If not set, coordinates are in absolute coordinate space.
+		@param out An output Bounds instance.
+		@param dx The top-left X offset of the added bounds rectangle.
+		@param dy The top-left Y offset of the added bounds rectangle.
+		@param width The width of the added bounds rectangle.
+		@param height The height of the added bounds rectangle.
+	**/
+	@:dox(show)
 	function addBounds( relativeTo : Object, out : h2d.col.Bounds, dx : Float, dy : Float, width : Float, height : Float ) {
 
 		if( width <= 0 || height <= 0 ) return;
@@ -265,7 +331,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Return the total number of children, recursively.
+		Return the total number of children in the whole tree, recursively.
 	**/
 	public function getObjectsCount() : Int {
 		var k = 0;
@@ -275,7 +341,8 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Convert a local position (or [0,0] if pt is null) relative to the object origin into an absolute screen position, applying all the inherited transforms.
+		Convert a local position (or `[0,0]` if `pt` is null) relative to the object origin into an absolute screen position, applying all the inherited transforms.
+		@param pt An optional position to convert and return. Allocates new Point at 0,0 position if not set. Modifies the Point instance as is.
 	**/
 	public function localToGlobal( ?pt : h2d.col.Point ) : h2d.col.Point {
 		syncPos();
@@ -289,6 +356,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 
 	/**
 		Convert an absolute screen position into a local position relative to the object origin, applying all the inherited transforms.
+		@param pt A position to convert and return. Modifies the Point instance as is.
 	**/
 	public function globalToLocal( pt : h2d.col.Point ) : h2d.col.Point {
 		syncPos();
@@ -302,6 +370,9 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		return pt;
 	}
 
+	/**
+		Returns an `h2d.Scene` down the hierarchy tree or `null` if object is not added to Scene.
+	**/
 	public function getScene() : Scene {
 		var p = this;
 		while( p.parent != null ) p = p.parent;
@@ -360,17 +431,33 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		#end
 	}
 
+	/**
+		Should be called when Object content was changed in order to notify parent container. See `Object.contentChanged`.
+	**/
+	@:dox(show)
 	inline function onContentChanged() {
 		if( parentContainer != null ) parentContainer.contentChanged(this);
 	}
 
-	// called when we're allocated already but moved in hierarchy
+	/**
+		Sent when object was already allocated and moved within scene object tree hierarchy.
+
+		Do not remove the super call when overriding.
+
+		@param parentChanged Whether Object was moved withing same parent (through `Layers.ysort` for example) or relocated to a new one.
+	**/
+	@:dox(show)
 	function onHierarchyMoved( parentChanged : Bool ) {
 		for ( c in children )
 			c.onHierarchyMoved(parentChanged);
 	}
 
-	// kept for internal init
+	/**
+		Sent when object is being added to an allocated scene.
+
+		Do not remove the super call when overriding.
+	**/
+	@:dox(show)
 	function onAdd() {
 		allocated = true;
 		if( filter != null )
@@ -379,7 +466,13 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 			c.onAdd();
 	}
 
-	// kept for internal cleanup
+
+	/**
+		Sent when object is removed from the allocated scene.
+
+		Do not remove the super call when overriding.
+	**/
+	@:dox(show)
 	function onRemove() {
 		allocated = false;
 		if( filter != null )
@@ -388,6 +481,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 			c.onRemove();
 	}
 
+	/**
+		Populates Matrix with current absolute object transform values. See `Object.getAbsPos` for up-to-date values.
+	**/
+	@:dox(show)
 	function getMatrix( m : h2d.col.Matrix ) {
 		m.a = matA;
 		m.b = matB;
@@ -398,7 +495,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Remove the given object from our immediate children list if it's part of it.
+		Remove the given object from the immediate children list of the object if it's part of it.
 	**/
 	public function removeChild( s : Object ) {
 		if( children.remove(s) ) {
@@ -413,6 +510,11 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		}
 	}
 
+	/**
+		Sets the parent container for this Object and it's children. 
+		See `Object.contentChanged` for more details.
+	**/
+	@:dox(show)
 	function setParentContainer( c : Object ) {
 		parentContainer = c;
 		for( s in children )
@@ -420,7 +522,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Remove all children from our immediate children list
+		Remove all children from the immediate children list.
 	**/
 	public function removeChildren() {
 		while( numChildren>0 )
@@ -428,30 +530,55 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Same as parent.removeChild(this), but does nothing if parent is null.
-		In order to capture add/removal from scene, you can override onAdd/onRemove/onHierarchyMoved
+		Same as `parent.removeChild(this)`, but does nothing if parent is null.
 	**/
 	public inline function remove() {
 		if( this != null && parent != null ) parent.removeChild(this);
 	}
 
 	/**
-		Draw the object and all its children into the given Texture
+		Draw the object and all its children into the given Texture.
 	**/
 	public function drawTo( t : h3d.mat.Texture ) {
 		var s = getScene();
 		var needDispose = s == null;
 		if( s == null ) s = new h2d.Scene();
-		@:privateAccess s.drawImplTo(this, t);
+		@:privateAccess s.drawImplTo(this, [t]);
 		if( needDispose ) {
 			s.dispose();
 			onRemove();
 		}
 	}
 
+	/**
+		Draw the object and all its children into the given Textures.
+	**/
+	public function drawToTextures( texs : Array<h3d.mat.Texture>, outputs : Array<hxsl.Output> ) {
+		var s = getScene();
+		var needDispose = s == null;
+		if( s == null ) s = new h2d.Scene();
+		@:privateAccess s.drawImplTo(this, texs, outputs);
+		if( needDispose ) {
+			s.dispose();
+			onRemove();
+		}
+	}
+
+	/**
+		Override this method in order to add custom graphics rendering to your Object.
+		`draw` is invoked before rendering of the object children.
+	**/
+	@:dox(show)
 	function draw( ctx : RenderContext ) {
 	}
 
+	/**
+		Performs a sync of data for rendering (such as absolute position recalculation).
+		While this method can be used as a substitute to an update loop, it's primary purpose it to prepare the Object to be rendered.
+
+		Do not remove the super call when overriding.
+	**/
+	@:dox(show)
 	function sync( ctx : RenderContext ) {
 		var changed = posChanged;
 		if( changed ) {
@@ -479,6 +606,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		}
 	}
 
+	/**
+		Ensures that object has an up-to-date position transform.
+	**/
+	@:dox(show)
 	function syncPos() {
 		if( parent != null ) parent.syncPos();
 		if( posChanged ) {
@@ -489,6 +620,13 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		}
 	}
 
+	/**
+		<span class="label">Internal usage</span>
+		Calculates the absolute object position transform.
+		See `Object.syncPos` for a safe position sync method.
+		This method does not ensure that object parents also have up-to-date transform nor does it clear the `Object.posChanged` flag.
+	**/
+	@:dox(show)
 	function calcAbsPos() {
 		if( parent == null ) {
 			var cr, sr;
@@ -533,6 +671,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		}
 	}
 
+	/**
+		Draws single Tile instance with this Object transform.
+	**/
+	@:dox(show)
 	function emitTile( ctx : RenderContext, tile : h2d.Tile ) {
 		if( nullDrawable == null )
 			nullDrawable = @:privateAccess new h2d.Drawable(null);
@@ -604,27 +746,36 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Clip a local bounds with our global viewport
+		<span class="label">Internal usage</span>
+		Clip a local bounds with our global viewport.
+		Used during filter rendering in order to clip out areas that are off-screen and should not be rendered.
 	**/
+	@:dox(show)
 	function clipBounds( ctx : RenderContext, bounds : h2d.col.Bounds ) {
 		var view = ctx.tmpBounds;
 		var matA, matB, matC, matD, absX, absY;
 		@:privateAccess if( ctx.inFilter != null ) {
 			var f1 = ctx.baseShader.filterMatrixA;
 			var f2 = ctx.baseShader.filterMatrixB;
-			matA = this.matA * f1.x + this.matB * f1.y;
-			matB = this.matA * f2.x + this.matB * f2.y;
-			matC = this.matC * f1.x + this.matD * f1.y;
-			matD = this.matC * f2.x + this.matD * f2.y;
-			absX = this.absX * f1.x + this.absY * f1.y + f1.z;
-			absY = this.absX * f2.x + this.absY * f2.y + f2.z;
+			var tmpA = this.matA * f1.x + this.matB * f1.y;
+			var tmpB = this.matA * f2.x + this.matB * f2.y;
+			var tmpC = this.matC * f1.x + this.matD * f1.y;
+			var tmpD = this.matC * f2.x + this.matD * f2.y;
+			var tmpX = this.absX * f1.x + this.absY * f1.y + f1.z;
+			var tmpY = this.absX * f2.x + this.absY * f2.y + f2.z;
+			matA = tmpA * ctx.viewA + tmpB * ctx.viewC;
+			matB = tmpA * ctx.viewB + tmpB * ctx.viewD;
+			matC = tmpC * ctx.viewA + tmpD * ctx.viewC;
+			matD = tmpC * ctx.viewB + tmpD * ctx.viewD;
+			absX = tmpX * ctx.viewA + tmpY * ctx.viewC + ctx.viewX;
+			absY = tmpX * ctx.viewB + tmpY * ctx.viewD + ctx.viewY;
 		} else {
-			matA = this.matA;
-			matB = this.matB;
-			matC = this.matC;
-			matD = this.matD;
-			absX = this.absX;
-			absY = this.absY;
+			matA = this.matA * ctx.viewA + this.matB * ctx.viewC;
+			matB = this.matA * ctx.viewB + this.matB * ctx.viewD;
+			matC = this.matC * ctx.viewA + this.matD * ctx.viewC;
+			matD = this.matC * ctx.viewB + this.matD * ctx.viewD;
+			absX = this.absX * ctx.viewA + this.absY * ctx.viewC + ctx.viewX;
+			absY = this.absX * ctx.viewB + this.absY * ctx.viewD + ctx.viewY;
 		}
 
 		// intersect our transformed local view with our viewport in global space
@@ -639,10 +790,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 
 		// clip with our scene
 		@:privateAccess {
-			if( view.xMin < ctx.curX ) view.xMin = ctx.curX;
-			if( view.yMin < ctx.curY ) view.yMin = ctx.curY;
-			if( view.xMax > ctx.curX + ctx.curWidth ) view.xMax = ctx.curX + ctx.curWidth;
-			if( view.yMax > ctx.curY + ctx.curHeight ) view.yMax = ctx.curY + ctx.curHeight;
+			if( view.xMin < -1 ) view.xMin = -1;
+			if( view.yMin < -1 ) view.yMin = -1;
+			if( view.xMax > 1 ) view.xMax = 1;
+			if( view.yMax > 1 ) view.yMax = 1;
 		}
 
 		// inverse our matrix
@@ -697,7 +848,10 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		var width = Math.ceil(total.xMax - xMin - 1e-10);
 		var height = Math.ceil(total.yMax - yMin - 1e-10);
 
-		if( width <= 0 || height <= 0 || total.xMax < total.xMin ) return;
+		if( width <= 0 || height <= 0 || total.xMax < total.xMin ) {
+			ctx.popFilter();
+			return;
+		}
 
 		var t = ctx.textures.allocTarget("filterTemp", width, height, false);
 		ctx.pushTarget(t, xMin, yMin, width, height);
@@ -708,7 +862,6 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		var shader = @:privateAccess ctx.baseShader;
 		var oldA = shader.filterMatrixA.clone();
 		var oldB = shader.filterMatrixB.clone();
-		var oldF = @:privateAccess ctx.inFilter;
 
 		// 2x3 inverse matrix
 		var invDet = 1 / (matA * matD - matB * matC);
@@ -722,9 +875,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		shader.filterMatrixA.set(invA, invC, invX);
 		shader.filterMatrixB.set(invB, invD, invY);
 		ctx.globalAlpha = 1;
-		draw(ctx);
-		for( c in children )
-			c.drawRec(ctx);
+		drawContent(ctx);
 		ctx.flush();
 
 		var finalTile = h2d.Tile.fromTexture(t);
@@ -743,11 +894,11 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 
 		ctx.popTarget();
 		ctx.popFilter();
+		ctx.globalAlpha = oldAlpha;
 
 		if( finalTile == null )
 			return;
 
-		ctx.globalAlpha = oldAlpha;
 		drawFiltered(ctx, finalTile);
 	}
 
@@ -781,15 +932,19 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		} else {
 			var old = ctx.globalAlpha;
 			ctx.globalAlpha *= alpha;
-			if( ctx.front2back ) {
-				var nchilds = children.length;
-				for (i in 0...nchilds) children[nchilds - 1 - i].drawRec(ctx);
-				draw(ctx);
-			} else {
-				draw(ctx);
-				for( c in children ) c.drawRec(ctx);
-			}
+			drawContent(ctx);
 			ctx.globalAlpha = old;
+		}
+	}
+
+	function drawContent( ctx : RenderContext ) {
+		if ( ctx.front2back ) {
+			var i = children.length;
+			while ( i-- > 0 ) children[i].drawRec(ctx);
+			draw(ctx);
+		} else {
+			draw(ctx);
+			for ( c in children ) c.drawRec(ctx);
 		}
 	}
 
@@ -819,7 +974,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Move the object by the specied amount along its current direction (rotation angle).
+		Move the object by the specified amount along its current direction (`Object.rotation` angle).
 	**/
 	public function move( dx : Float, dy : Float ) {
 		x += dx * Math.cos(rotation);
@@ -858,14 +1013,14 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Return the `n`th element among our immediate children list, or null if there is no.
+		Return the `n`th element among the immediate children list of this object, or `null` if there is no Object at this position.
 	**/
 	public inline function getChildAt( n ) {
 		return children[n];
 	}
 
 	/**
-		Return the index of the object `o` within our immediate children list, or `-1` if it is not part of our children list.
+		Return the index of the object `o` within the immediate children list of this object, or `-1` if it is not part of the children list.
 	**/
 	public function getChildIndex( o ) {
 		for( i in 0...children.length )
@@ -875,7 +1030,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	}
 
 	/**
-		Search for an object recursively by name, return null if not found.
+		Search for an object recursively by name, return `null` if not found.
 	**/
 	public function getObjectByName( name : String ) {
 		if( this.name == name )
@@ -898,6 +1053,7 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 		return new hxd.impl.ArrayIterator(children);
 	}
 
+	@:dox(hide)
 	function toString() {
 		var c = Type.getClassName(Type.getClass(this));
 		return name == null ? c : name + "(" + c + ")";
@@ -906,15 +1062,25 @@ class Object #if domkit implements domkit.Model<h2d.Object> #end {
 	// ---- additional methods for containers (h2d.Flow)
 
 	/**
-		This is called by our children if we have defined their parentContainer when they get resized
+		<span class="label">Advanced usage</span>  
+		Called by the children of a container object if they have `parentContainer` defined in them.
+		Primary use-case is when the child size got changed, requiring content to reevaluate positioning such as `Flow` layouts,
+		but also can be used for other purposes. 
 	**/
+	@:dox(show)
 	function contentChanged( s : Object ) {
 	}
 
 	/**
+		<span class="label">Advanced usage</span>  
 		This can be called by a parent container to constraint the size of its children.
-		Negative value mean that constraint is to be disable.
+		Negative value mean that constraint is to be disabled.
+
+		For example, `Text` constraints it's maximum width, causing word-wrap to occur within constrained area.
+
+		@see `FlowProperties.constraint`
 	**/
+	@:dox(show)
 	function constraintSize( maxWidth : Float, maxHeight : Float ) {
 	}
 
