@@ -1,6 +1,51 @@
 package hxsl;
 using hxsl.Ast;
 
+class Samplers {
+
+	public var count : Int;
+	var named : Map<String, Int>;
+
+	public function new() {
+		count = 0;
+		named = new Map();
+	}
+
+	public function make( v : TVar, arr : Array<Int> ) : Array<Int> {
+
+		var ntex = switch( v.type ) {
+		case TArray(t, SConst(k)) if( t.isSampler() ): k;
+		case t if( t.isSampler() ): 1;
+		default:
+			return null;
+		}
+
+		var names = null;
+		if( v.qualifiers != null ) {
+			for( q in v.qualifiers ) {
+				switch( q ) {
+				case Sampler(nl): names = nl.split(",");
+				default:
+				}
+			}
+		}
+		for( i in 0...ntex ) {
+			if( names == null || names[i] == "" )
+				arr.push(count++);
+			else {
+				var idx = named.get(names[i]);
+				if( idx == null ) {
+					idx = count++;
+					named.set(names[i], idx);
+				}
+				arr.push(idx);
+			}
+		}
+		return arr;
+	}
+
+}
+
 class HlslOut {
 
 	static var KWD_LIST = [
@@ -53,7 +98,7 @@ class HlslOut {
 	var decls : Array<String>;
 	var isVertex : Bool;
 	var allNames : Map<String, Int>;
-	var samplers : Map<Int, Int>;
+	var samplers : Map<Int, Array<Int>>;
 	public var varNames : Map<Int,String>;
 
 	var varAccess : Map<Int,String>;
@@ -193,10 +238,17 @@ class HlslOut {
 			addValue(eif, tabs);
 			add(" : ");
 			addValue(eelse, tabs);
-		case TMeta(_, _, e):
-			addValue(e, tabs);
+		case TMeta(m,args,e):
+			handleMeta(m, args, addValue, e, tabs);
 		default:
 			addExpr(e, tabs);
+		}
+	}
+
+	function handleMeta( m, args : Array<Ast.Const>, callb, e, tabs ) {
+		switch( [m, args] ) {
+		default:
+			callb(e,tabs);
 		}
 	}
 
@@ -251,13 +303,14 @@ class HlslOut {
 			var offset = 0;
 			var expr = switch( args[0].e ) {
 			case TArray(e,{ e : TConst(CInt(i)) }): offset = i; e;
+			case TArray(e,{ e : TBinop(OpAdd,{e:TVar(_)},{e:TConst(CInt(_))}) }): throw "Offset in texture access: need loop unroll?";
 			default: args[0];
 			}
 			switch( expr.e ) {
 			case TVar(v):
-				var samplerIndex = samplers.get(v.id);
-				if( samplerIndex == null ) throw "assert";
-				add('__Samplers[${samplerIndex+offset}]');
+				var samplers = samplers.get(v.id);
+				if( samplers == null ) throw "assert";
+				add('__Samplers[${samplers[offset]}]');
 			default: throw "assert";
 			}
 			for( i in 1...args.length ) {
@@ -459,6 +512,7 @@ class HlslOut {
 			case OpIncrement: "++";
 			case OpDecrement: "--";
 			case OpNegBits: "~";
+			default: throw "assert"; // OpSpread for Haxe4.2+
 			});
 			addValue(e1, tabs);
 		case TVarDecl(v, init):
@@ -545,8 +599,8 @@ class HlslOut {
 			add("[");
 			addValue(index, tabs);
 			add("]");
-		case TMeta(_, _, e):
-			addExpr(e, tabs);
+		case TMeta(m, args, e):
+			handleMeta(m, args, addExpr, e, tabs);
 		}
 	}
 
@@ -678,22 +732,12 @@ class HlslOut {
 		}
 		if( bufCount > 0 ) add("\n");
 
+		var ctx = new Samplers();
+		for( v in textures )
+			samplers.set(v.id, ctx.make(v, []));
 
-		var samplerCount = 0;
-		for( v in textures ) {
-			samplers.set(v.id, samplerCount);
-			switch( v.type ) {
-			case TArray(t, size):
-				samplerCount += switch( size ) {
-				case SConst(i): i;
-				default: throw "assert";
-				};
-			default:
-				samplerCount++;
-			}
-		}
-		if( samplerCount > 0 )
-			add('SamplerState __Samplers[$samplerCount];\n');
+		if( ctx.count > 0 )
+			add('SamplerState __Samplers[${ctx.count}];\n');
 	}
 
 	function initStatics( s : ShaderData ) {

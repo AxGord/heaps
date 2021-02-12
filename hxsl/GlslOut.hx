@@ -49,7 +49,7 @@ class GlslOut {
 	var isVertex : Bool;
 	var allNames : Map<String, Int>;
 	var outIndexes : Map<Int, Int>;
-	var intelDriverFix : Bool;
+
 	var isES(get,never) : Bool;
 	var isES2(get,never) : Bool;
 	var uniformBuffer : Int = 0;
@@ -57,6 +57,16 @@ class GlslOut {
 	public var varNames : Map<Int,String>;
 	public var glES : Null<Float>;
 	public var version : Null<Int>;
+
+	/*
+		Intel HD driver fix:
+			single element arrays are interpreted as not arrays, creating mismatch when
+			handling uniforms/textures. The fix changes decl[1] into decl[2] with one unused element.
+
+		Should not be enabled on AMD driver as it will create mismatch wrt uniforms binding
+		when there are some unused textures in shader output.
+	*/
+	var intelDriverFix : Bool;
 
 	public function new() {
 		varNames = new Map();
@@ -166,7 +176,7 @@ class GlslOut {
 			}
 			add("]");
 		case TBuffer(t, size):
-			add("uniform_buffer"+(uniformBuffer++));
+			add((isVertex ? "vertex_" : "") + "uniform_buffer"+(uniformBuffer++));
 			add(" { ");
 			v.type = TArray(t,size);
 			addVar(v);
@@ -372,6 +382,7 @@ class GlslOut {
 			case OpIncrement: "++";
 			case OpDecrement: "--";
 			case OpNegBits: "~";
+			default: throw "assert"; // OpSpread for Haxe4.2+
 			});
 			addValue(e1, tabs);
 		case TVarDecl(v, init):
@@ -642,19 +653,6 @@ class GlslOut {
 		buf = new StringBuf();
 		exprValues = [];
 
-		/*
-			Intel HD driver fix:
-				single element arrays are interpreted as not arrays, creating mismatch when
-				handling uniforms/textures. The fix changes decl[1] into decl[2] with one unused element
-
-				This fix is only for desktop, WebGL has errors with Cube Textures if there's
-				both Texture2D and TextureCube arrays in shader.
-				Also disable it for third party GL implementations (consoles)
-		*/
-		#if !(usegl || js)
-		intelDriverFix = true;
-		#end
-
 		decl("precision mediump float;");
 
 		if( s.funs.length != 1 ) throw "assert";
@@ -674,6 +672,15 @@ class GlslOut {
 			}
 		default:
 			addExpr(f.expr, "");
+		}
+		if( isVertex ) {
+			/**
+				In Heaps and DirectX, vertex output Z position is in [0,1] range
+				Whereas in OpenGL it's [-1, 1].
+				Given we have either [X, Y, 0, N] for zNear or [X, Y, F, F] for zFar,
+				this shader operation will map [0, 1] range to [-1, 1] for correct clipping.
+			**/
+			add("\tgl_Position.z += gl_Position.z - gl_Position.w;\n");
 		}
 		add("}");
 		exprValues.push(buf.toString());

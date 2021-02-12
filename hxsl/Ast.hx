@@ -84,6 +84,8 @@ enum VarQualifier {
 	Ignore; // the variable is ignored in reflection (inspector)
 	PerInstance( v : Int );
 	Doc( s : String );
+	Borrow( source : String );
+	Sampler( name : String );
 }
 
 enum Prec {
@@ -377,6 +379,16 @@ class Tools {
 			for( q2 in v.qualifiers )
 				if( q2 == q )
 					return true;
+		return false;
+	}
+
+	public static function hasBorrowQualifier( v : TVar, path : String ) {
+		if ( v.qualifiers != null )
+			for( q in v.qualifiers )
+				switch (q) {
+					case Borrow(s): return path == s;
+					default:
+				}
 		return false;
 	}
 

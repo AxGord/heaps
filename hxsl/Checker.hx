@@ -682,7 +682,6 @@ class Checker {
 					for( q in v.qualifiers )
 						switch( q ) {
 						case Const(_): v.kind = Param;
-						case Private: v.kind = Var;
 						default:
 						}
 				}
@@ -780,7 +779,7 @@ class Checker {
 			tv.qualifiers = v.qualifiers;
 			for( q in v.qualifiers )
 				switch( q ) {
-				case Private: if( tv.kind != Var ) error("@private only allowed on varying", pos);
+				case Private:
 				case Const(_):
 					var p = parent;
 					while( p != null ) {
@@ -808,6 +807,14 @@ class Checker {
 					case TFloat, TInt, TVec(_, VFloat):
 					default:
 						error("Precision qualifier not supported on " + v.type, pos);
+					}
+				case Borrow(source):
+					if ( v.kind != Local ) error("Borrow should not have a type qualifier", pos);
+				case Sampler(_):
+					switch( v.type ) {
+					case TArray(t, _) if( t.isSampler() ):
+					case t if( t.isSampler() ):
+					default: error("Sampler should be on sampler type or sampler array", pos);
 					}
 				case Ignore, Doc(_):
 				}
@@ -937,7 +944,7 @@ class Checker {
 		case TInt: stype = VInt; 1;
 		case TBool: stype = VBool; 1;
 		case TVec(size, t): stype = t; size;
-		case TBytes(size): stype = VInt; size;
+		case TBytes(size): stype = VFloat; size;
 		default: stype = null; 0;
 		}
 		if( ncomps > 0 && f.length <= 4 ) {

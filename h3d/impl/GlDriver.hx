@@ -288,7 +288,13 @@ class GlDriver extends Driver {
 	}
 
 	override function getNativeShaderCode( shader : hxsl.RuntimeShader ) {
-		return "// vertex:\n" + ShaderCompiler.compile(shader.vertex.data) + "// fragment:\n" + ShaderCompiler.compile(shader.fragment.data);
+		inline function compile(sh) {
+			var glout = new ShaderCompiler();
+			glout.glES = glES;
+			glout.version = shaderVersion;
+			return glout.run(sh);
+		}
+		return "// vertex:\n" + compile(shader.vertex.data) + "// fragment:\n" + compile(shader.fragment.data);
 	}
 
 	override public function getDriverName(details:Bool) {
@@ -326,7 +332,7 @@ class GlDriver extends Driver {
 		return new CompiledShader(s, shader.vertex, shader);
 	}
 
-	function initShader( p : CompiledProgram, s : CompiledShader, shader : hxsl.RuntimeShader.RuntimeShaderData ) {
+	function initShader( p : CompiledProgram, s : CompiledShader, shader : hxsl.RuntimeShader.RuntimeShaderData, rt : hxsl.RuntimeShader ) {
 		var prefix = s.vertex ? "vertex" : "fragment";
 		s.globals = gl.getUniformLocation(p.p, prefix + "Globals");
 		s.params = gl.getUniformLocation(p.p, prefix + "Params");
@@ -355,15 +361,29 @@ class GlDriver extends Driver {
 				index = 0;
 			}
 			for( i in 0...count ) {
-				s.textures.push({ u : gl.getUniformLocation(p.p, prefix+name+"["+index+"]"), t : curT, mode : mode });
+				var loc = gl.getUniformLocation(p.p, prefix+name+"["+index+"]");
+				/*
+					This is a texture that is used in HxSL but has been optimized out by GLSL compiler.
+					While some drivers will correctly report `null` here, some others (AMD) will instead
+					return a uniform but still mismatch the texture slot, leading to swapped textures or
+					incorrect rendering. We also don't handle texture skipping in DirectX.
+
+					Fix is to make sure HxSL will optimize the texture out.
+					Alternate fix is to improve HxSL so he does it on its own.
+				*/
+				if( loc == null )
+					throw "Texture "+rt.spec.instances[t.instance].shader.data.name+"."+t.name+" is missing from shader output";
+				s.textures.push({ u : loc, t : curT, mode : mode });
 				index++;
 			}
 			t = t.next;
 		}
 		if( shader.bufferCount > 0 ) {
-			s.buffers = [for( i in 0...shader.bufferCount ) gl.getUniformBlockIndex(p.p,"uniform_buffer"+i)];
+			s.buffers = [for( i in 0...shader.bufferCount ) gl.getUniformBlockIndex(p.p,(shader.vertex?"vertex_":"")+"uniform_buffer"+i)];
+			var start = 0;
+			if( !s.vertex ) start = rt.vertex.bufferCount;
 			for( i in 0...shader.bufferCount )
-				gl.uniformBlockBinding(p.p,s.buffers[i],i);
+				gl.uniformBlockBinding(p.p,s.buffers[i],i + start);
 		}
 	}
 
@@ -417,8 +437,8 @@ class GlDriver extends Driver {
 				throw "Program linkage failure: "+log+"\nVertex=\n"+shader.vertex.code+"\n\nFragment=\n"+shader.fragment.code;
 			}
 			firstShader = false;
-			initShader(p, p.vertex, shader.vertex);
-			initShader(p, p.fragment, shader.fragment);
+			initShader(p, p.vertex, shader.vertex, shader);
+			initShader(p, p.fragment, shader.fragment, shader);
 			var attribNames = [];
 			p.attribs = [];
 			p.hasAttribIndex = [];
@@ -521,8 +541,11 @@ class GlDriver extends Driver {
 			}
 		case Buffers:
 			if( s.buffers != null ) {
+				var start = 0;
+				if( !s.vertex && curShader.vertex.buffers != null )
+					start = curShader.vertex.buffers.length;
 				for( i in 0...s.buffers.length )
-					gl.bindBufferBase(GL2.UNIFORM_BUFFER, i, @:privateAccess buf.buffers[i].buffer.vbuf.b);
+					gl.bindBufferBase(GL2.UNIFORM_BUFFER, i + start, @:privateAccess buf.buffers[i].buffer.vbuf.b);
 			}
 		case Textures:
 			var tcount = s.textures.length;

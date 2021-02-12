@@ -26,6 +26,7 @@ private class ShaderContext {
 	public var paramsContent : hl.Bytes;
 	public var globals : dx.Resource;
 	public var params : dx.Resource;
+	public var samplersMap : Array<Int>;
 	#if debug
 	public var debugSource : String;
 	#end
@@ -98,6 +99,7 @@ class DirectXDriver extends h3d.impl.Driver {
 	var currentColorMask = -1;
 	var targetsCount = 1;
 	var allowDraw = false;
+	var maxSamplers = 16;
 
 	var depthStates : Map<Int,{ def : DepthStencilState, stencils : Array<{ op : Int, mask : Int, state : DepthStencilState }> }>;
 	var blendStates : Map<Int,BlendState>;
@@ -776,6 +778,12 @@ class DirectXDriver extends h3d.impl.Driver {
 		ctx.bufferCount = shader.bufferCount;
 		ctx.globals = dx.Driver.createBuffer(shader.globalsSize * 16, Dynamic, ConstantBuffer, CpuWrite, None, 0, null);
 		ctx.params = dx.Driver.createBuffer(shader.paramsSize * 16, Dynamic, ConstantBuffer, CpuWrite, None, 0, null);
+		ctx.samplersMap = [];
+
+		var samplers = new hxsl.HlslOut.Samplers();
+		for( v in shader.data.vars )
+			samplers.make(v, ctx.samplersMap);
+
 		#if debug
 		ctx.debugSource = shader.code;
 		#end
@@ -783,10 +791,16 @@ class DirectXDriver extends h3d.impl.Driver {
 	}
 
 	override function getNativeShaderCode( shader : hxsl.RuntimeShader ) {
-		var v = compileShader(shader.vertex, true).bytes;
-		var f = compileShader(shader.fragment, true).bytes;
-		return Driver.disassembleShader(v, None, null) + "\n" + Driver.disassembleShader(f, None, null);
-		//return "// vertex:\n" + new hxsl.HlslOut().run(shader.vertex.data) + "// fragment:\n" + new hxsl.HlslOut().run(shader.fragment.data);
+		function dumpShader(s:hxsl.RuntimeShader.RuntimeShaderData) {
+			var code = new hxsl.HlslOut().run(s.data);
+			try {
+				var scomp = compileShader(s, true).bytes;
+				code += "\n// ASM=\n" + Driver.disassembleShader(scomp, None, null) + "\n\n";
+			} catch( e : Dynamic ) {
+			}
+			return code;
+		}
+		return dumpShader(shader.vertex)+"\n\n"+dumpShader(shader.fragment);
 	}
 
 	override function hasFeature(f:Feature) {
@@ -1140,10 +1154,11 @@ class DirectXDriver extends h3d.impl.Driver {
 					if( start < 0 ) start = i;
 				}
 
+				var sidx = shader.samplersMap[i];
 				var bits = @:privateAccess t.bits;
 				if( t.lodBias != 0 )
 					bits |= Std.int((t.lodBias + 32)*32) << 10;
-				if( bits != state.samplerBits[i] ) {
+				if( i < maxSamplers && bits != state.samplerBits[sidx] ) {
 					var ss = samplerStates.get(bits);
 					if( ss == null ) {
 						var desc = new SamplerDesc();
@@ -1157,10 +1172,10 @@ class DirectXDriver extends h3d.impl.Driver {
 						ss = Driver.createSamplerState(desc);
 						samplerStates.set(bits, ss);
 					}
-					state.samplerBits[i] = bits;
-					state.samplers[i] = ss;
-					smax = i;
-					if( sstart < 0 ) sstart = i;
+					state.samplerBits[sidx] = bits;
+					state.samplers[sidx] = ss;
+					if( sidx > smax ) smax = sidx;
+					if( sstart < 0 || sidx < sstart ) sstart = sidx;
 				}
 			}
 			switch( state.kind) {

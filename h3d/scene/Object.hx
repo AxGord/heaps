@@ -284,6 +284,17 @@ class Object implements hxd.impl.Serializable {
 	}
 
 	/**
+		Tells if the object is contained into this object children, recursively.
+	**/
+	public function contains( o : Object ) {
+		while( o != null ) {
+			o = o.parent;
+			if( o == this ) return true;
+		}
+		return false;
+	}
+
+	/**
 		Find a single object in the tree by calling `f` on each and returning the first not-null value returned, or null if not found.
 	**/
 	public function find<T>( f : Object -> Null<T> ) : Null<T> {
@@ -550,6 +561,18 @@ class Object implements hxd.impl.Serializable {
 	public function getAbsPos() {
 		syncPos();
 		return absPos;
+	}
+
+	/**
+		Returns the position matrix relative to another scene object
+	**/
+	public function getRelPos( obj : Object ) {
+		if( obj == null )
+			return getAbsPos();
+		syncPos();
+		var m = new h3d.Matrix();
+		m.multiply(absPos, obj.getInvPos());
+		return m;
 	}
 
 	/**

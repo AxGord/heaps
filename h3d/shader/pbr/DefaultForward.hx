@@ -1,6 +1,6 @@
 package h3d.shader.pbr;
 
-class DefaultFoward extends hxsl.Shader {
+class DefaultForward extends hxsl.Shader {
 
 	static var SRC = {
 
@@ -10,27 +10,29 @@ class DefaultFoward extends hxsl.Shader {
 		// Import pbr info
 		var output : {color : Vec4, metalness : Float, roughness : Float, occlusion : Float, emissive : Float };
 
-		@const(256) var BUFFER_SIZE : Int;
+		@const(256) var BUFFER_SIZE : Int = 1;
 		@param var lightInfos : Buffer<Vec4, BUFFER_SIZE>;
 
 		// Buffer Info
 		@param var dirLightCount : Int;
 		@param var pointLightCount : Int;
 		@param var spotLightCount : Int;
-		@const(8) var dirLightStride : Int;
-		@const(8) var pointLightStride : Int;
+		@param var dirLightStride : Int;
+		@param var pointLightStride : Int;
 
 		// ShadowMaps
-		@param var dirShadowMaps : Array<Sampler2D, 2>;
-		@param var pointShadowMaps : Array<SamplerCube, 3>;
-		@param var spotShadowMaps : Array<Sampler2D, 3>;
+		//@param var dirShadowMaps : Array<Sampler2D, 2>;
+		//@param var pointShadowMaps : Array<SamplerCube, 3>;
+		//@param var spotShadowMaps : Array<Sampler2D, 3>;
 
 		// Direct Lighting
 		@param var cameraPosition : Vec3;
 		@param var emissivePower : Float;
+
+		var albedoGamma : Vec3;
+
 		var view : Vec3;
 		var NdV : Float;
-		var albedo : Vec3;
 		var pbrSpecularColor : Vec3;
 		var metalness : Float;
 		var roughness : Float;
@@ -39,7 +41,7 @@ class DefaultFoward extends hxsl.Shader {
 		var F0 : Vec3;
 
 		// Indirect Lighting
-		@param var USE_INDIRECT = 1.0;
+		@const var USE_INDIRECT = false;
 		@param var irrLut : Sampler2D;
 		@param var irrDiffuse : SamplerCube;
 		@param var irrSpecular : SamplerCube;
@@ -58,7 +60,7 @@ class DefaultFoward extends hxsl.Shader {
 		function indirectLighting() : Vec3 {
 			var F = F0 + (max(vec3(1 - roughness), F0) - F0) * exp2( ( -5.55473 * NdV - 6.98316) * NdV );
 			var rotatedNormal = rotateNormal(transformedNormal);
-			var diffuse = irrDiffuse.get(rotatedNormal).rgb * albedo;
+			var diffuse = irrDiffuse.get(rotatedNormal).rgb * albedoGamma;
 			var reflectVec = reflect(-view, transformedNormal);
 			var rotatedReflecVec = rotateNormal(reflectVec);
 			var envSpec = textureLod(irrSpecular, rotatedReflecVec, roughness * irrSpecularLevels).rgb;
@@ -75,7 +77,7 @@ class DefaultFoward extends hxsl.Shader {
 				var half = (lightDirection + view).normalize();
 				var NdH = clamp(transformedNormal.dot(half), 0.0, 1.0);
 				var VdH = clamp(view.dot(half), 0.0, 1.0);
-				var diffuse = albedo / PI;
+				var diffuse = albedoGamma / PI;
 
 				// General Cook-Torrance formula for microfacet BRDF
 				// 	f(l,v) = D(h).F(v,h).G(l,v,h) / 4(n.l)(n.v)
@@ -91,34 +93,30 @@ class DefaultFoward extends hxsl.Shader {
 
 		function __init__fragment() {
 			pbrSpecularColor = vec3(0.04);
-			albedo = pixelColor.rgb * pixelColor.rgb; // gamma correct
+			albedoGamma = pixelColor.rgb * pixelColor.rgb; // gamma correct
 		}
 
 		function init() {
 			view = (cameraPosition - transformedPosition).normalize();
 			NdV = transformedNormal.dot(view).max(0.);
-			metalness = output.metalness;
-			roughness = output.roughness;
-			occlusion = output.occlusion;
-			emissive = output.emissive;
 		}
 
 		function evaluateDirLight( index : Int ) : Vec3 {
-			var i = index * 3;
+			var i = index * 5;
 			var lightColor = lightInfos[i].rgb;
 			var lightDir = lightInfos[i+1].xyz;
 			var hasShadowMap = lightInfos[i].a > 0;
 
 			// Shadow
 			var shadow = 1.0;
-			if( hasShadowMap ) {
+			/*if( hasShadowMap ) {
 				var shadowBias = lightInfos[i+1].a;
 				var shadowProj = mat3x4(lightInfos[i+2], lightInfos[i+3], lightInfos[i+4]);
 				var shadowPos = transformedPosition * shadowProj;
 				var shadowUv = screenToUv(shadowPos.xy);
 				var depth = dirShadowMaps[index].get(shadowUv.xy).r;
 				shadow = (shadowPos.z - shadowBias > depth) ? 0.0 : 1.0;
-			}
+			}*/
 
 			return directLighting(lightColor, lightDir) * shadow;
 		}
@@ -135,20 +133,20 @@ class DefaultFoward extends hxsl.Shader {
 
 			// Shadow
 			var shadow = 1.0;
-			if( hasShadowMap ) {
+			/*if( hasShadowMap ) {
 				var shadowBias = lightInfos[i+2].b;
 				var posToLight = transformedPosition.xyz - lightPos;
 				var dir = normalize(posToLight.xyz);
 				var depth = pointShadowMaps[index].getLod(dir, 0).r * range;
 				var zMax = length(posToLight);
 				shadow = (zMax - shadowBias > depth) ? 0.0 : 1.0;
-			}
+			}*/
 
 			return directLighting(pointLightIntensity(delta, size, invRange4) * lightColor, delta.normalize()) * shadow;
 		}
 
 		function evaluateSpotLight( index : Int ) : Vec3 {
-			var i = index * 4 + dirLightStride + pointLightStride;
+			var i = index * 8 + dirLightStride + pointLightStride;
 			var lightColor = lightInfos[i].rgb;
 			var range = lightInfos[i].a;
 			var lightPos = lightInfos[i+1].xyz;
@@ -161,7 +159,7 @@ class DefaultFoward extends hxsl.Shader {
 
 			// Shadow
 			var shadow = 1.0;
-			if( hasShadowMap ) {
+			/*if( hasShadowMap ) {
 				var shadowBias = lightInfos[i+3].a;
 				var shadowProj = mat4(lightInfos[i+4], lightInfos[i+5], lightInfos[i+6], lightInfos[i+7]);
 				var shadowPos = vec4(transformedPosition, 1.0) * shadowProj;
@@ -169,7 +167,7 @@ class DefaultFoward extends hxsl.Shader {
 				var shadowUv = screenToUv(shadowPos.xy);
 				var depth = spotShadowMaps[index].get(shadowUv.xy).r;
 				shadow = (shadowPos.z - shadowBias > depth) ? 0.0 : 1.0;
-			}
+			}*/
 
 			var fallOffInfo = spotLightIntensity(delta, lightDir, range, invRange4, fallOff, angle);
 			var fallOff = fallOffInfo.x;
@@ -182,22 +180,22 @@ class DefaultFoward extends hxsl.Shader {
 
 			var lightAccumulation = vec3(0);
 
-			F0 = mix(pbrSpecularColor, albedo, metalness);
+			F0 = mix(pbrSpecularColor, albedoGamma, metalness);
 
 			// Dir Light
-			for( l in 0 ... dirLightCount )
+			@unroll for( l in 0 ... dirLightCount )
 				lightAccumulation += evaluateDirLight(l);
 
 			// Point Light
-			for( l in 0 ... pointLightCount )
+			@unroll for( l in 0 ... pointLightCount )
 				lightAccumulation += evaluatePointLight(l);
 
 			// Spot Light
-			for( l in 0 ... spotLightCount )
+			@unroll for( l in 0 ... spotLightCount )
 				lightAccumulation += evaluateSpotLight(l);
 
 			// Indirect only support the main env from the scene at the moment
-			if( USE_INDIRECT > 0.0)
+			if( USE_INDIRECT )
 				lightAccumulation += indirectLighting();
 
 			// Emissive Pass
